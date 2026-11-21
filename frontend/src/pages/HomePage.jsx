@@ -8,7 +8,6 @@ import AccommodationSection from '../components/AccommodationSection';
 import SwimmingPoolSection from '../components/SwimmingPoolSection';
 import BanquetHallSection from '../components/BanquetHallSection';
 import LawnSection from '../components/LawnSection';
-import PackagesSection from '../components/PackagesSection';
 import FacilitiesSection from '../components/FacilitiesSection';
 import PhotoGallerySection from '../components/PhotoGallerySection';
 import TestimonialsSection from '../components/TestimonialsSection';
@@ -19,7 +18,6 @@ import Footer from '../components/Footer';
 import BookingModal from '../components/BookingModal';
 import TrackBookingModal from '../components/TrackBookingModal';
 import PoolBookingModal from '../components/PoolBookingModal';
-import PackageBookingModal from '../components/PackageBookingModal';
 import SocialSidebar from '../components/SocialSidebar';
 import { api } from '../services/api';
 
@@ -119,13 +117,7 @@ export default function HomePage() {
         {/* 7. Green Lush Lawn Section */}
         <LawnSection />
 
-        {/* 8. Resort Packages Section */}
-        <PackagesSection
-          packages={packages}
-          onBookPackage={handleOpenPackageBooking}
-        />
-
-        {/* 12. Facilities & Amenities */}
+        {/* 8. Facilities & Amenities */}
         <FacilitiesSection />
 
         {/* 12. Photo Gallery */}
@@ -166,12 +158,6 @@ export default function HomePage() {
       <PoolBookingModal
         isOpen={poolModalOpen}
         onClose={() => setPoolModalOpen(false)}
-      />
-
-      <PackageBookingModal
-        isOpen={packageModalOpen}
-        onClose={() => setPackageModalOpen(false)}
-        selectedPackage={selectedPackageForBooking}
       />
     </div>
   );

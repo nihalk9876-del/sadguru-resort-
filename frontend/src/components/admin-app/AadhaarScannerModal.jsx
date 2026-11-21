@@ -136,7 +136,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
         }
       }
 
-      // 2. ATTEMPT REAL OCR VIA TESSERACT.JS (Reads actual printed text from card)
+      // 2. ATTEMPT REAL OCR VIA TESSERACT.JS (Reads actual printed text from card with Marathi & English support)
       setProgressPercent(30);
       setProcessingStatus('Scanning printed text with Optical Character Recognition (OCR)...');
 
@@ -145,23 +145,40 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
       enhancedCanvas.width = canvas.width;
       enhancedCanvas.height = canvas.height;
       const enhCtx = enhancedCanvas.getContext('2d');
-      enhCtx.filter = 'contrast(140%) grayscale(100%)';
+      enhCtx.filter = 'contrast(150%) grayscale(100%)';
       enhCtx.drawImage(canvas, 0, 0);
 
-      const ocrResult = await Tesseract.recognize(
-        enhancedCanvas,
-        'eng',
-        {
-          logger: (m) => {
-            if (m.status === 'recognizing text') {
-              setProgressPercent(40 + Math.round((m.progress || 0) * 50));
-              setProcessingStatus(`Recognizing printed characters (${Math.round((m.progress || 0) * 100)}%)...`);
+      let recognizedText = '';
+      try {
+        const ocrResult = await Tesseract.recognize(
+          enhancedCanvas,
+          'mar+eng',
+          {
+            logger: (m) => {
+              if (m.status === 'recognizing text') {
+                setProgressPercent(40 + Math.round((m.progress || 0) * 50));
+                setProcessingStatus(`Recognizing Marathi & English characters (${Math.round((m.progress || 0) * 100)}%)...`);
+              }
             }
           }
+        );
+        recognizedText = ocrResult?.data?.text || '';
+      } catch (ocrErr) {
+        console.warn('Marathi OCR pack load failed, attempting standard English OCR fallback:', ocrErr);
+        try {
+          const fallbackRes = await Tesseract.recognize(enhancedCanvas, 'eng', {
+            logger: (m) => {
+              if (m.status === 'recognizing text') {
+                setProgressPercent(40 + Math.round((m.progress || 0) * 50));
+                setProcessingStatus(`Recognizing characters (${Math.round((m.progress || 0) * 100)}%)...`);
+              }
+            }
+          });
+          recognizedText = fallbackRes?.data?.text || '';
+        } catch (e) {
+          console.error('All OCR methods failed:', e);
         }
-      );
-
-      const recognizedText = ocrResult?.data?.text || '';
+      }
       console.log('[Scanner] Raw text recognized by OCR:\n', recognizedText);
       setRawExtractedText(recognizedText);
 
@@ -237,9 +254,11 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
     };
   };
 
-  // Real OCR text parser for printed Indian Aadhaar cards
+  // Real OCR text parser for printed Indian Aadhaar cards with Marathi Priority
   const parseAadhaarPrintedText = (text) => {
     let name = '';
+    let marathiName = '';
+    let englishName = '';
     let dob = '';
     let age = null;
     let aadhaarNumber = '';
@@ -248,8 +267,8 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 
     // 1. EXTRACT 12-DIGIT AADHAAR NUMBER
-    // Matches 4 digits space 4 digits space 4 digits (e.g. 5432 9876 1234)
-    const aadhaarMatch = text.match(/\b([2-9]\d{3})\s?(\d{4})\s?(\d{4})\b/);
+    // Matches 4 digits space 4 digits space 4 digits (e.g. 5432 9876 1234 or 5432-9876-1234)
+    const aadhaarMatch = text.match(/\b([2-9]\d{3})[\s\-]?(\d{4})[\s\-]?(\d{4})\b/);
     if (aadhaarMatch) {
       const last4 = aadhaarMatch[3];
       // Store in masked format per UIDAI compliance: XXXX XXXX 1234
@@ -257,7 +276,6 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
     }
 
     // 2. EXTRACT DATE OF BIRTH (DOB)
-    // Matches "DOB: DD/MM/YYYY" or "Date of Birth: DD-MM-YYYY" or "Year of Birth: YYYY"
     const dobRegex = /(?:DOB|Date of Birth|जन्म तारीख|जन्म वर्ष|Year of Birth)[:\s]*([0-9]{2}[\/\-\.][0-9]{2}[\/\-\.][0-9]{4}|[0-9]{4})/i;
     const dobMatch = text.match(dobRegex);
     
@@ -281,9 +299,14 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
     else if (/\b(?:FEMALE|महिला)\b/i.test(text)) gender = 'Female';
     else if (/\bTRANSGENDER\b/i.test(text)) gender = 'Transgender';
 
-    // 5. EXTRACT GUEST FULL NAME
-    // Exclude noise words printed on Aadhaar cards
-    const excludedKeywords = [
+    // 5. EXTRACT GUEST FULL NAME - PRIORITIZING MARATHI SCRIPT AS REQUIRED
+    const marathiExclude = [
+      'भारत', 'सरकार', 'विशिष्ट', 'ओळख', 'प्राधिकरण', 'माझे', 'माझी', 
+      'आधार', 'जन्म', 'तारीख', 'वर्ष', 'पुरुष', 'महिला', 'पत्ता', 'नोंदणी', 
+      'दिनांक', 'मदत', 'हेल्पलाइन', 'शासन', 'महाराष्ट्र'
+    ];
+
+    const englishExclude = [
       'GOVERNMENT', 'INDIA', 'UNIQUE', 'IDENTIFICATION', 'AUTHORITY', 
       'ENROLMENT', 'ENROLLMENT', 'DOB', 'DATE', 'BIRTH', 'YEAR', 'MALE', 
       'FEMALE', 'TRANSGENDER', 'HELP', 'UIDAI', 'WWW', 'AADHAAR', 'VID', 
@@ -291,27 +314,49 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
       'INCOME', 'TAX', 'DEPARTMENT', 'STATE', 'DIST'
     ];
 
-    // Find candidate name line (usually 2-4 clean alphabetic words)
+    // Priority 1: Search for Marathi (Devanagari \u0900-\u097F) Name line
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/[\u0900-\u097F]/.test(line)) {
+        const cleanMarathi = line.replace(/[^\u0900-\u097F\s\.]/g, ' ').replace(/\s+/g, ' ').trim();
+        const mWords = cleanMarathi.split(/\s+/).filter(w => w.length > 1);
+
+        if (mWords.length >= 2 && mWords.length <= 4) {
+          const hasExcluded = mWords.some(w => marathiExclude.some(ex => w.includes(ex)));
+          if (!hasExcluded && cleanMarathi.length >= 4) {
+            marathiName = cleanMarathi;
+            break;
+          }
+        }
+      }
+    }
+
+    // Priority 2: Search for English Name line (as secondary/fallback)
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].replace(/[^a-zA-Z\s]/g, '').trim();
       const words = line.split(/\s+/).filter(w => w.length > 1);
 
       if (words.length >= 2 && words.length <= 4) {
-        const hasKeyword = words.some(w => excludedKeywords.includes(w.toUpperCase()));
+        const hasKeyword = words.some(w => englishExclude.includes(w.toUpperCase()));
         if (!hasKeyword && line.length >= 5) {
-          name = line;
+          englishName = line;
           break;
         }
       }
     }
 
+    // As requested: calculate only the Marathi one when present, fallback to English
+    name = marathiName || englishName || '';
+
     return {
       name,
+      marathiName,
+      englishName,
       dob,
       age,
       gender,
       aadhaarNumber,
-      source: 'Printed Card OCR',
+      source: marathiName ? 'Aadhaar Card (Marathi)' : 'Printed Card OCR',
       verified: !!(name && aadhaarNumber)
     };
   };
@@ -529,11 +574,27 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
               <div className="space-y-2">
                 {/* Guest Name */}
                 <div>
-                  <span className="text-[10px] text-slate-500 uppercase font-mono block">Scanned Name</span>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] text-slate-500 uppercase font-mono block">
+                      {scannedData.marathiName ? 'Scanned Marathi Name (मराठी नाव)' : 'Scanned Full Name'}
+                    </span>
+                    {scannedData.englishName && scannedData.marathiName && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextName = scannedData.name === scannedData.marathiName ? scannedData.englishName : scannedData.marathiName;
+                          setScannedData({ ...scannedData, name: nextName });
+                        }}
+                        className="text-[10px] text-amber-700 font-semibold hover:underline"
+                      >
+                        {scannedData.name === scannedData.marathiName ? `English: ${scannedData.englishName}` : `Marathi: ${scannedData.marathiName}`}
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="text"
                     value={scannedData.name}
-                    placeholder="Guest Full Name"
+                    placeholder="Guest Full Name (मराठीत नाव)"
                     onChange={e => setScannedData({ ...scannedData, name: e.target.value })}
                     className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 font-bold text-slate-900 text-xs focus:border-amber-500 outline-none"
                   />

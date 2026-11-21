@@ -56,13 +56,13 @@ export default function SwimmingPoolSection({ onOpenPoolBooking }) {
       <div className="absolute top-0 inset-x-0 h-40 bg-gradient-to-b from-[#141d15] via-[#141d15]/60 to-transparent pointer-events-none z-10" />
 
       {/* Seamless Smooth Blend at the Bottom transitioning to Banquet Section */}
-      <div className="absolute bottom-0 inset-x-0 h-40 bg-gradient-to-b from-transparent via-[#FAF7F2]/60 to-[#FAF7F2] pointer-events-none z-10" />
+      <div className="absolute bottom-0 inset-x-0 h-44 sm:h-56 bg-gradient-to-b from-transparent via-[#141d15]/60 to-[#141d15] pointer-events-none z-10" />
 
       {/* Decorative water wave accent */}
       <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-cyan-400/50 to-transparent z-20" />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-20">
-        
+
         {/* Section Heading */}
         <div className="text-center max-w-3xl mx-auto space-y-3 mb-16">
           <span className="text-resort-gold uppercase tracking-[0.25em] text-xs font-bold block drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
@@ -98,7 +98,7 @@ export default function SwimmingPoolSection({ onOpenPoolBooking }) {
 
         {/* Gallery & Information Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
-          
+
           {/* Main Visual Gallery (7 cols) */}
           <div className="lg:col-span-7 space-y-4">
             {/* Big Active Image */}
@@ -123,9 +123,8 @@ export default function SwimmingPoolSection({ onOpenPoolBooking }) {
                 <button
                   key={idx}
                   onClick={() => setActiveImageIndex(idx)}
-                  className={`relative h-20 rounded-xl overflow-hidden border-2 transition-all ${
-                    activeImageIndex === idx ? 'border-resort-gold scale-95 shadow-md' : 'border-transparent opacity-80 hover:opacity-100'
-                  }`}
+                  className={`relative h-20 rounded-xl overflow-hidden border-2 transition-all ${activeImageIndex === idx ? 'border-resort-gold scale-95 shadow-md' : 'border-transparent opacity-80 hover:opacity-100'
+                    }`}
                 >
                   <img src={img.url} alt="" className="w-full h-full object-cover" />
                 </button>

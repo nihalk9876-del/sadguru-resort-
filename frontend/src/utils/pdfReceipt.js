@@ -54,9 +54,11 @@ export function generateReceiptPDF(booking, shouldPrint = false) {
     head: [['GUEST IDENTIFICATION', 'ROOM & ALLOTMENT DETAILS']],
     body: [
       [
+        `Stay Category: ${booking.stayType || 'Standard/Family'}\n` +
         `Primary Guest: ${booking.customerName || 'N/A'}\n` +
         `Mobile Contact: ${booking.phone || 'N/A'}\n` +
         `ID Verification: ${booking.aadhaarNumber ? `Aadhaar (${booking.aadhaarNumber})` : (booking.idProofType || 'Alternative ID / Manual')}\n` +
+        (booking.secondGuestName ? `Second Guest / Partner: ${booking.secondGuestName} (${booking.secondGuestAge ? `${booking.secondGuestAge} Yrs` : ''})\nPartner Aadhaar: ${booking.secondGuestAadhaar || 'N/A'}\n` : '') +
         `Age / DOB: ${booking.age ? `${booking.age} Yrs` : 'N/A'}${booking.dob ? ` (${booking.dob})` : ''}\n` +
         `Occupants: ${booking.adults || booking.guests || 2} Adults${booking.children ? `, ${booking.children} Children` : ''}`,
 

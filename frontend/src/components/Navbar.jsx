@@ -10,7 +10,6 @@ export default function Navbar({ onOpenBooking, onOpenTrack }) {
     { label: 'Pool', href: '#swimming-pool' },
     { label: 'Banquet', href: '#banquet' },
     { label: 'Lawn', href: '#lawn' },
-    { label: 'Packages', href: '#packages' },
     { label: 'Facilities', href: '#facilities' },
     { label: 'Contact', href: '#contact' },
   ];

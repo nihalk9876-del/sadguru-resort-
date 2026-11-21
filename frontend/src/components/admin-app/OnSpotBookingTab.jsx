@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { 
   Camera, Check, ShieldCheck, User, Phone, Hash, Calendar, 
   Clock, DollarSign, BedDouble, AlertCircle, Sparkles, Printer, 
-  MessageCircle, ArrowRight, RefreshCw, X, Download
+  MessageCircle, ArrowRight, RefreshCw, X, Download, Heart, Home, Users
 } from 'lucide-react';
 import AadhaarScannerModal from './AadhaarScannerModal';
 import { generateReceiptPDF, shareReceiptWhatsApp } from '../../utils/pdfReceipt';
 
 export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedRoom, onClearPreselectedRoom }) {
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scannerTarget, setScannerTarget] = useState('guest1'); // 'guest1' | 'guest2'
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [completedBooking, setCompletedBooking] = useState(null);
@@ -16,11 +17,15 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
   // Form State
   const [formData, setFormData] = useState({
     roomNumber: preselectedRoom || '',
+    stayType: 'Couple', // 'Couple' | 'Family'
     customerName: '',
     phone: '',
     aadhaarNumber: '',
     dob: '',
     age: '',
+    secondGuestName: '',
+    secondGuestAge: '',
+    secondGuestAadhaar: '',
     guests: 2,
     adults: 2,
     children: 0,
@@ -56,13 +61,22 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
   }, [preselectedRoom, rooms]);
 
   const handleAadhaarScanned = (scanned) => {
-    setFormData(prev => ({
-      ...prev,
-      customerName: scanned.customerName || prev.customerName,
-      aadhaarNumber: scanned.aadhaarNumber || prev.aadhaarNumber,
-      dob: scanned.dob || prev.dob,
-      age: scanned.age || prev.age
-    }));
+    if (scannerTarget === 'guest2') {
+      setFormData(prev => ({
+        ...prev,
+        secondGuestName: scanned.customerName || prev.secondGuestName,
+        secondGuestAadhaar: scanned.aadhaarNumber || prev.secondGuestAadhaar,
+        secondGuestAge: scanned.age || prev.secondGuestAge
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        customerName: scanned.customerName || prev.customerName,
+        aadhaarNumber: scanned.aadhaarNumber || prev.aadhaarNumber,
+        dob: scanned.dob || prev.dob,
+        age: scanned.age || prev.age
+      }));
+    }
   };
 
   const handleRoomChange = (roomNum) => {
@@ -84,7 +98,7 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
       return;
     }
     if (!formData.customerName.trim()) {
-      setErrorMessage('Guest name is required (scan Aadhaar or type name).');
+      setErrorMessage('Primary Guest Name is required (scan Aadhaar or type name in Marathi/English).');
       return;
     }
     if (!formData.phone.trim()) {
@@ -92,17 +106,37 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
       return;
     }
 
+    // Couple Validation
+    if (formData.stayType === 'Couple') {
+      if (!formData.secondGuestName || !formData.secondGuestName.trim()) {
+        setErrorMessage('For Couple stay, the second guest full name is mandatory.');
+        return;
+      }
+      if (!formData.secondGuestAge) {
+        setErrorMessage('For Couple stay, the second guest age is mandatory.');
+        return;
+      }
+      if (!formData.secondGuestAadhaar || !formData.secondGuestAadhaar.trim()) {
+        setErrorMessage('For Couple stay, the second guest 12-digit Aadhaar number is mandatory.');
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       const created = await onBookingSuccess({
         roomNumber: formData.roomNumber,
+        stayType: formData.stayType,
         customerName: formData.customerName,
         phone: formData.phone,
         aadhaarNumber: formData.aadhaarNumber,
         dob: formData.dob,
         age: formData.age,
-        guests: formData.guests,
-        adults: formData.adults,
+        secondGuestName: formData.secondGuestName,
+        secondGuestAge: formData.secondGuestAge,
+        secondGuestAadhaar: formData.secondGuestAadhaar,
+        guests: formData.stayType === 'Couple' ? 2 : formData.guests,
+        adults: formData.stayType === 'Couple' ? 2 : formData.adults,
         children: formData.children,
         checkInDate: formData.checkInDate,
         checkInTime: formData.checkInTime,
@@ -144,11 +178,11 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
         {/* Scan Guest Aadhaar Card Button */}
         <button
           type="button"
-          onClick={() => setIsScannerOpen(true)}
+          onClick={() => { setScannerTarget('guest1'); setIsScannerOpen(true); }}
           className="w-full py-3.5 px-4 rounded-xl bg-[#DFB06C] hover:bg-[#d4a35d] text-slate-950 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-xs active:scale-[0.98] transition cursor-pointer"
         >
           <Camera className="w-4 h-4 text-slate-950" />
-          <span>Scan Guest Aadhaar Card</span>
+          <span>Scan Primary Guest Aadhaar (मराठीत नाव)</span>
         </button>
       </div>
 
@@ -168,7 +202,7 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
           </div>
           <button
             type="button"
-            onClick={() => setIsScannerOpen(true)}
+            onClick={() => { setScannerTarget('guest1'); setIsScannerOpen(true); }}
             className="text-[11px] text-amber-700 font-semibold hover:underline"
           >
             Re-scan
@@ -186,7 +220,7 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
           </div>
         )}
 
-        {/* Section 1: 3x3 Room Selection Grid - Exactly matching user screenshot */}
+        {/* Section 1: 3x3 Room Selection Grid */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs space-y-3">
           <div className="flex items-center justify-between">
             <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
@@ -245,20 +279,84 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
           </div>
         </div>
 
-        {/* Section 2: Guest Details Card */}
+        {/* Section 2: Stay Category Option (Directly below room selection) */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs space-y-3">
-          <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-            <User className="w-4 h-4 text-amber-600" />
-            2. GUEST INFORMATION (AADHAAR AUTO-FILL)
-          </label>
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+              <Users className="w-4 h-4 text-amber-600" />
+              2. STAY CATEGORY (COUPLE / FAMILY)
+            </label>
+            <span className="text-[10px] text-slate-500 font-medium">
+              Select stay type
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              onClick={() => setFormData(prev => ({ ...prev, stayType: 'Couple', guests: 2, adults: 2 }))}
+              className={`p-3 rounded-xl border-2 text-left transition flex items-center gap-3 ${
+                formData.stayType === 'Couple'
+                  ? 'border-amber-500 bg-amber-50/70 shadow-sm ring-2 ring-amber-500/20'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+              }`}
+            >
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                formData.stayType === 'Couple' ? 'bg-amber-500 text-white shadow-xs' : 'bg-slate-100 text-slate-600'
+              }`}>
+                <Heart className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-xs font-bold text-slate-900 block">Couple Stay</span>
+                <span className="text-[10px] text-slate-500 block">Both Aadhaar required</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setFormData(prev => ({ ...prev, stayType: 'Family' }))}
+              className={`p-3 rounded-xl border-2 text-left transition flex items-center gap-3 ${
+                formData.stayType === 'Family'
+                  ? 'border-amber-500 bg-amber-50/70 shadow-sm ring-2 ring-amber-500/20'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+              }`}
+            >
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                formData.stayType === 'Family' ? 'bg-amber-500 text-white shadow-xs' : 'bg-slate-100 text-slate-600'
+              }`}>
+                <Home className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-xs font-bold text-slate-900 block">Family Stay</span>
+                <span className="text-[10px] text-slate-500 block">1 Aadhaar sufficient</span>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        {/* Section 3: Guest Details Card */}
+        <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs space-y-3.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+              <User className="w-4 h-4 text-amber-600" />
+              3. GUEST INFORMATION (PRIMARY GUEST)
+            </label>
+            <button
+              type="button"
+              onClick={() => { setScannerTarget('guest1'); setIsScannerOpen(true); }}
+              className="text-[11px] text-amber-700 font-semibold hover:underline flex items-center gap-1"
+            >
+              <Camera className="w-3.5 h-3.5" /> Scan Aadhaar
+            </button>
+          </div>
 
           <div className="space-y-2.5 text-xs">
             <div>
-              <label className="text-[11px] text-slate-500 block mb-1">Guest Full Name *</label>
+              <label className="text-[11px] text-slate-500 block mb-1">Primary Guest Full Name * (मराठी नाव)</label>
               <input
                 type="text"
                 required
-                placeholder="Auto-fills from Aadhaar scan or enter name"
+                placeholder="Auto-fills from Aadhaar scan (मराठीत नाव) or enter name"
                 value={formData.customerName}
                 onChange={e => setFormData({ ...formData, customerName: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 font-semibold focus:bg-white focus:border-amber-500 outline-none transition"
@@ -279,7 +377,7 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[11px] text-slate-500 block mb-1">12-Digit Aadhaar No.</label>
+                <label className="text-[11px] text-slate-500 block mb-1">Primary 12-Digit Aadhaar No.</label>
                 <input
                   type="text"
                   placeholder="XXXX XXXX XXXX"
@@ -290,7 +388,7 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-500 block mb-1">Guest Age</label>
+                <label className="text-[11px] text-slate-500 block mb-1">Primary Guest Age</label>
                 <input
                   type="number"
                   placeholder="e.g. 34"
@@ -301,29 +399,94 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
               </div>
             </div>
 
-            <div>
-              <label className="text-[11px] text-slate-500 block mb-1">Total Guests in Room</label>
-              <select
-                value={formData.guests}
-                onChange={e => setFormData({ ...formData, guests: Number(e.target.value), adults: Number(e.target.value) })}
-                className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 font-medium focus:bg-white focus:border-amber-500 outline-none"
-              >
-                <option value={1}>1 Guest</option>
-                <option value={2}>2 Guests</option>
-                <option value={3}>3 Guests</option>
-                <option value={4}>4 Guests</option>
-                <option value={5}>5 Guests</option>
-                <option value={6}>6 Guests (Family)</option>
-              </select>
-            </div>
+            {formData.stayType === 'Family' ? (
+              /* Family Stay Note & Capacity Selection */
+              <div className="space-y-2 pt-1 border-t border-slate-100">
+                <div className="p-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 text-[11px] text-emerald-800 flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span><strong>Family Stay:</strong> Primary guest Aadhaar is sufficient for family check-in.</span>
+                </div>
+
+                <div>
+                  <label className="text-[11px] text-slate-500 block mb-1">Total Family Members in Room</label>
+                  <select
+                    value={formData.guests}
+                    onChange={e => setFormData({ ...formData, guests: Number(e.target.value), adults: Number(e.target.value) })}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 font-medium focus:bg-white focus:border-amber-500 outline-none"
+                  >
+                    <option value={1}>1 Guest</option>
+                    <option value={2}>2 Guests</option>
+                    <option value={3}>3 Guests</option>
+                    <option value={4}>4 Guests</option>
+                    <option value={5}>5 Guests</option>
+                    <option value={6}>6 Guests (Family)</option>
+                  </select>
+                </div>
+              </div>
+            ) : (
+              /* Couple Stay: Mandatory Second Guest Card */
+              <div className="pt-2 border-t border-slate-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
+                    <Heart className="w-3.5 h-3.5 text-amber-600" />
+                    Second Guest / Partner Details (Mandatory)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setScannerTarget('guest2'); setIsScannerOpen(true); }}
+                    className="text-[10px] text-amber-700 font-semibold hover:underline flex items-center gap-1"
+                  >
+                    <Camera className="w-3.5 h-3.5" /> Scan Partner Aadhaar
+                  </button>
+                </div>
+
+                <div>
+                  <label className="text-[11px] text-slate-500 block mb-1">Second Guest Full Name * (मराठीत नाव)</label>
+                  <input
+                    type="text"
+                    required={formData.stayType === 'Couple'}
+                    placeholder="Enter partner name or scan Aadhaar"
+                    value={formData.secondGuestName}
+                    onChange={e => setFormData({ ...formData, secondGuestName: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl bg-amber-50/50 border border-amber-200 text-slate-900 font-semibold focus:bg-white focus:border-amber-500 outline-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] text-slate-500 block mb-1">Second Guest Aadhaar No. *</label>
+                    <input
+                      type="text"
+                      required={formData.stayType === 'Couple'}
+                      placeholder="XXXX XXXX XXXX"
+                      value={formData.secondGuestAadhaar}
+                      onChange={e => setFormData({ ...formData, secondGuestAadhaar: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl bg-amber-50/50 border border-amber-200 text-amber-900 font-mono font-bold focus:bg-white focus:border-amber-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-slate-500 block mb-1">Second Guest Age *</label>
+                    <input
+                      type="number"
+                      required={formData.stayType === 'Couple'}
+                      placeholder="e.g. 30"
+                      value={formData.secondGuestAge}
+                      onChange={e => setFormData({ ...formData, secondGuestAge: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl bg-amber-50/50 border border-amber-200 text-slate-900 font-bold focus:bg-white focus:border-amber-500 outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Section 3: Timing & Rate Details */}
+        {/* Section 4: Timing & Rate Details */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs space-y-3">
           <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
             <Clock className="w-4 h-4 text-amber-600" />
-            3. TIMING & RATE CHARGED
+            4. TIMING & RATE CHARGED
           </label>
 
           <div className="space-y-2.5 text-xs">
@@ -414,6 +577,7 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
         isOpen={isScannerOpen}
         onClose={() => setIsScannerOpen(false)}
         onScanSuccess={handleAadhaarScanned}
+        targetLabel={scannerTarget === 'guest2' ? 'Second Guest / Partner' : 'Primary Guest'}
       />
 
       {/* Booking Success Modal */}
@@ -434,13 +598,29 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
                 <span className="font-bold text-slate-900">Room {completedBooking.roomNumber} ({completedBooking.category})</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Guest:</span>
+                <span className="text-slate-500">Stay Type:</span>
+                <span className="font-semibold text-amber-800">{completedBooking.stayType || formData.stayType}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Primary Guest:</span>
                 <span className="font-semibold text-slate-900">{completedBooking.customerName}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Aadhaar:</span>
+                <span className="text-slate-500">Primary Aadhaar:</span>
                 <span className="font-mono text-amber-800">{completedBooking.aadhaarNumber || '-'}</span>
               </div>
+              {completedBooking.secondGuestName && (
+                <>
+                  <div className="flex justify-between border-t border-slate-200 pt-1">
+                    <span className="text-slate-500">Partner / Guest 2:</span>
+                    <span className="font-semibold text-slate-900">{completedBooking.secondGuestName} ({completedBooking.secondGuestAge} yrs)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Partner Aadhaar:</span>
+                    <span className="font-mono text-amber-800">{completedBooking.secondGuestAadhaar || '-'}</span>
+                  </div>
+                </>
+              )}
               <div className="flex justify-between">
                 <span className="text-slate-500">Occupied Till:</span>
                 <span className="font-bold text-amber-900">{completedBooking.checkOut} ({completedBooking.checkOutTime || '11:00 AM'})</span>

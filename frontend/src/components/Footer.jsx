@@ -72,10 +72,10 @@ export default function Footer({ onOpenTrack, onOpenBooking }) {
             <ul className="space-y-2 text-xs text-gray-300">
               <li><a href="#banquet" className="hover:text-resort-gold transition-colors">AC Banquet Hall (500 Pax)</a></li>
               <li><a href="#lawn" className="hover:text-resort-gold transition-colors">25,000 Sq.Ft Lush Lawn</a></li>
-              <li><a href="#banquet" className="hover:text-resort-gold transition-colors">Wedding Functions</a></li>
-              <li><a href="#packages" className="hover:text-resort-gold transition-colors">Celebration Packages</a></li>
+              <li><a href="#banquet" className="hover:text-resort-gold transition-colors">Wedding & Engagement</a></li>
+              <li><a href="#lawn" className="hover:text-resort-gold transition-colors">Open-Air Receptions</a></li>
               <li><a href="#banquet" className="hover:text-resort-gold transition-colors">Corporate Retreats</a></li>
-              <li><a href="#packages" className="hover:text-resort-gold transition-colors">Couple Stay Getaways</a></li>
+              <li><a href="#facilities" className="hover:text-resort-gold transition-colors">Catering & Amenities</a></li>
             </ul>
           </div>
 

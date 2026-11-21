@@ -293,8 +293,10 @@ export const api = {
     return handleResponse(res);
   },
 
-  getAdminReports: async (timeframe = 'month') => {
-    const res = await fetch(`${API_BASE}/admin/reports?timeframe=${timeframe}`, {
+  getAdminReports: async (timeframe = 'month', targetDate = null) => {
+    let url = `${API_BASE}/admin/reports?timeframe=${timeframe}`;
+    if (targetDate) url += `&date=${encodeURIComponent(targetDate)}`;
+    const res = await fetch(url, {
       headers: getAuthHeaders()
     });
     return handleResponse(res);

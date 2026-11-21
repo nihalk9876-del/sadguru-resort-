@@ -973,6 +973,10 @@ const db = {
           aadhaarNumber: occupantBooking.aadhaarNumber || 'Not Recorded',
           age: occupantBooking.age || null,
           dob: occupantBooking.dob || null,
+          stayType: occupantBooking.stayType || 'Family',
+          secondGuestName: occupantBooking.secondGuestName || null,
+          secondGuestAge: occupantBooking.secondGuestAge || null,
+          secondGuestAadhaar: occupantBooking.secondGuestAadhaar || null,
           guests: occupantBooking.guests || 2,
           adults: occupantBooking.adults || 2,
           children: occupantBooking.children || 0,
@@ -1014,6 +1018,10 @@ const db = {
         aadhaarNumber,
         dob,
         age,
+        stayType = 'Family',
+        secondGuestName = null,
+        secondGuestAge = null,
+        secondGuestAadhaar = null,
         guests = 2,
         adults = 2,
         children = 0,
@@ -1082,6 +1090,10 @@ const db = {
         aadhaarNumber: aadhaarNumber ? String(aadhaarNumber).trim() : null,
         dob: dob || null,
         age: age ? Number(age) : null,
+        stayType: stayType === 'Couple' ? 'Couple' : 'Family',
+        secondGuestName: secondGuestName ? String(secondGuestName).trim() : null,
+        secondGuestAge: secondGuestAge ? Number(secondGuestAge) : null,
+        secondGuestAadhaar: secondGuestAadhaar ? String(secondGuestAadhaar).trim() : null,
         guests: Number(guests),
         adults: Number(adults),
         children: Number(children),
@@ -1140,6 +1152,21 @@ const db = {
       booking.originalExpectedCheckOut = `${scheduledCheckOut} ${scheduledCheckOutTime || '11:00 AM'}`;
       booking.isEarlyCheckout = true;
       booking.updatedAt = now.toISOString();
+
+      // Ensure all checkout revenue is fully credited & settled
+      if (booking.remainingBalance > 0) {
+        booking.advancePaid = (Number(booking.advancePaid) || 0) + Number(booking.remainingBalance);
+        if (!booking.payments) booking.payments = [];
+        booking.payments.push({
+          id: `PAY-CO-${Date.now()}`,
+          amount: Number(booking.remainingBalance),
+          method: booking.paymentMethod || 'Cash',
+          date: now.toISOString(),
+          notes: 'Settled at Check-Out'
+        });
+        booking.remainingBalance = 0;
+        booking.paymentStatus = 'Paid';
+      }
 
       // Immediately transition room status to CLEANING
       const targetRoom = data.rooms.find(r => String(r.roomNumber) === String(booking.roomNumber) || String(r.id) === String(booking.roomId));
@@ -1284,12 +1311,115 @@ const db = {
   },
 
   // -------------------------------------------------------------
-  // ADMIN APP: WEEKLY & MONTHLY COMPREHENSIVE REPORTS & METRICS
+  // RECYCLE DATA POLICY: PURGE DETAIL >60 DAYS (2 MONTHS) WHILE PRESERVING REVENUE
   // -------------------------------------------------------------
-  getAdminReports: (timeframe = 'month') => {
+  recycleOldDataPolicy: (data) => {
+    if (!data) return;
+    if (!data.revenueArchive) {
+      data.revenueArchive = {
+        historicalTotalRevenue: 0,
+        historicalRoomBookingsCount: 0,
+        historicalPoolPassesCount: 0,
+        monthlySummary: {}
+      };
+    }
+
+    const twoMonthsAgo = new Date();
+    twoMonthsAgo.setDate(twoMonthsAgo.getDate() - 60);
+    const cutoffStr = twoMonthsAgo.toISOString().split('T')[0];
+
+    let recycledRooms = 0;
+    let recycledRevenue = 0;
+    const keptBookings = [];
+
+    (data.bookings || []).forEach(b => {
+      const bDate = (b.checkOut || b.createdAt || b.checkIn || '').split('T')[0];
+      const isSettled = b.status === 'Checked-Out' || b.status === 'Completed' || b.status === BOOKING_STATUS.CANCELLED;
+      const isOlderThan2Months = bDate < cutoffStr;
+
+      if (isOlderThan2Months && isSettled) {
+        recycledRooms++;
+        const rev = Number(b.advancePaid !== undefined ? b.advancePaid : b.totalAmount) || 0;
+        recycledRevenue += rev;
+        const monthKey = bDate.substring(0, 7); // 'YYYY-MM'
+
+        if (!data.revenueArchive.monthlySummary[monthKey]) {
+          data.revenueArchive.monthlySummary[monthKey] = {
+            month: monthKey,
+            roomRevenue: 0,
+            poolRevenue: 0,
+            totalRevenue: 0,
+            roomBookingsCount: 0,
+            poolPassesCount: 0
+          };
+        }
+        data.revenueArchive.monthlySummary[monthKey].roomRevenue += rev;
+        data.revenueArchive.monthlySummary[monthKey].totalRevenue += rev;
+        data.revenueArchive.monthlySummary[monthKey].roomBookingsCount += 1;
+      } else {
+        keptBookings.push(b);
+      }
+    });
+
+    const keptPool = [];
+    (data.poolBookings || []).forEach(p => {
+      const pDate = (p.date || p.createdAt || '').split('T')[0];
+      const isOlderThan2Months = pDate < cutoffStr;
+
+      if (isOlderThan2Months) {
+        const rev = Number(p.totalAmount || 0);
+        recycledRevenue += rev;
+        const monthKey = pDate.substring(0, 7);
+
+        if (!data.revenueArchive.monthlySummary[monthKey]) {
+          data.revenueArchive.monthlySummary[monthKey] = {
+            month: monthKey,
+            roomRevenue: 0,
+            poolRevenue: 0,
+            totalRevenue: 0,
+            roomBookingsCount: 0,
+            poolPassesCount: 0
+          };
+        }
+        data.revenueArchive.monthlySummary[monthKey].poolRevenue += rev;
+        data.revenueArchive.monthlySummary[monthKey].totalRevenue += rev;
+        data.revenueArchive.monthlySummary[monthKey].poolPassesCount += 1;
+        data.revenueArchive.historicalPoolPassesCount += 1;
+      } else {
+        keptPool.push(p);
+      }
+    });
+
+    if (recycledRooms > 0 || (data.poolBookings && keptPool.length < data.poolBookings.length)) {
+      data.revenueArchive.historicalTotalRevenue += recycledRevenue;
+      data.revenueArchive.historicalRoomBookingsCount += recycledRooms;
+      data.bookings = keptBookings;
+      data.poolBookings = keptPool;
+      writeDbDirect(data);
+    }
+  },
+
+  // -------------------------------------------------------------
+  // ADMIN APP: WEEKLY, MONTHLY & SPECIFIC DATE COMPREHENSIVE REPORTS
+  // -------------------------------------------------------------
+  getAdminReports: (timeframe = 'month', targetDate = null) => {
     const data = readDb();
+    
+    // Auto-run 2-month data retention & recycling
+    try {
+      db.recycleOldDataPolicy(data);
+    } catch (e) {
+      console.warn('[Recycle Policy Non-fatal]', e.message);
+    }
+
     const allBookings = data.bookings || [];
     const poolBookings = data.poolBookings || [];
+    const archive = data.revenueArchive || {
+      historicalTotalRevenue: 0,
+      historicalRoomBookingsCount: 0,
+      historicalPoolPassesCount: 0,
+      monthlySummary: {}
+    };
 
     const now = new Date();
     const todayStr = now.toISOString().split('T')[0];
@@ -1305,9 +1435,9 @@ const db = {
     cutoffDate.setDate(cutoffDate.getDate() - (daysToLookBack - 1));
     const cutoffStr = cutoffDate.toISOString().split('T')[0];
 
-    // Filter relevant room bookings
+    // Filter relevant room bookings for timeframe
     const filteredRoomBookings = allBookings.filter(b => {
-      const bDate = (b.createdAt || b.checkIn || '').split('T')[0];
+      const bDate = (b.checkOut || b.createdAt || b.checkIn || '').split('T')[0];
       return bDate >= cutoffStr && b.status !== BOOKING_STATUS.CANCELLED;
     });
 
@@ -1317,7 +1447,7 @@ const db = {
       return pDate >= cutoffStr && p.status !== BOOKING_STATUS.CANCELLED;
     });
 
-    // Revenue calculations
+    // Revenue calculations (including checked-out settled amounts & payments)
     let roomRevenue = 0;
     let poolRevenue = 0;
     let cashRevenue = 0;
@@ -1325,7 +1455,15 @@ const db = {
     let cardRevenue = 0;
 
     filteredRoomBookings.forEach(b => {
-      const rev = Number(b.advancePaid !== undefined ? b.advancePaid : b.totalAmount) || 0;
+      let rev = 0;
+      if (b.payments && b.payments.length > 0) {
+        rev = b.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      } else if (b.status === 'Checked-Out' || b.status === 'Completed') {
+        rev = Number(b.totalAmount || b.advancePaid || 0);
+      } else {
+        rev = Number(b.advancePaid !== undefined && b.advancePaid !== '' ? b.advancePaid : b.totalAmount) || 0;
+      }
+
       roomRevenue += rev;
       const method = (b.paymentMethod || 'Cash').toLowerCase();
       if (method.includes('upi') || method.includes('gpay') || method.includes('phonepe')) upiRevenue += rev;
@@ -1356,12 +1494,15 @@ const db = {
       let dayRoomRev = 0;
       let dayPoolRev = 0;
       let dayEntries = 0;
+      let dayRoomsBooked = 0;
 
       filteredRoomBookings.forEach(b => {
-        const bDate = (b.createdAt || b.checkIn || '').split('T')[0];
+        const bDate = (b.checkOut || b.createdAt || b.checkIn || '').split('T')[0];
         if (bDate === dStr) {
-          dayRoomRev += Number(b.advancePaid !== undefined ? b.advancePaid : b.totalAmount) || 0;
+          const rev = Number(b.advancePaid !== undefined ? b.advancePaid : b.totalAmount) || 0;
+          dayRoomRev += rev;
           dayEntries++;
+          dayRoomsBooked++;
         }
       });
 
@@ -1379,9 +1520,121 @@ const db = {
         roomRevenue: dayRoomRev,
         poolRevenue: dayPoolRev,
         totalRevenue: dayRoomRev + dayPoolRev,
-        entriesCount: dayEntries
+        entriesCount: dayEntries,
+        roomsBookedCount: dayRoomsBooked
       });
     }
+
+    // Specific Date Query: On which date how many rooms booked and for how much
+    let dateReport = null;
+    const activeDateFilter = targetDate || todayStr;
+    const dateRoomBookings = allBookings.filter(b => {
+      if (b.status === BOOKING_STATUS.CANCELLED) return false;
+      const inDate = (b.checkIn || '').split('T')[0];
+      const outDate = (b.checkOut || b.actualCheckOut || inDate).split('T')[0];
+      const createDate = (b.createdAt || '').split('T')[0];
+      return (activeDateFilter >= inDate && activeDateFilter <= outDate) || createDate === activeDateFilter;
+    });
+
+    const datePoolBookings = poolBookings.filter(p => {
+      const pDate = (p.date || p.createdAt || '').split('T')[0];
+      return pDate === activeDateFilter;
+    });
+
+    let dateRoomRevTotal = 0;
+    const roomsListForDate = dateRoomBookings.map(b => {
+      const rev = Number(b.totalAmount || b.advancePaid || 0);
+      dateRoomRevTotal += rev;
+      return {
+        id: b.id,
+        roomNumber: b.roomNumber,
+        roomName: b.roomName,
+        category: b.category,
+        customerName: b.customerName,
+        phone: b.phone,
+        stayType: b.stayType || 'Family',
+        secondGuestName: b.secondGuestName || null,
+        secondGuestAge: b.secondGuestAge || null,
+        secondGuestAadhaar: b.secondGuestAadhaar || null,
+        amountBookedFor: rev,
+        totalAmount: b.totalAmount,
+        advancePaid: b.advancePaid,
+        remainingBalance: b.remainingBalance || 0,
+        checkIn: b.checkIn,
+        checkInTime: b.checkInTime || '12:00 PM',
+        checkOut: b.checkOut,
+        checkOutTime: b.checkOutTime || '11:00 AM',
+        paymentStatus: b.paymentStatus || 'Paid',
+        paymentMethod: b.paymentMethod || 'Cash',
+        status: b.status
+      };
+    });
+
+    let datePoolRevTotal = 0;
+    datePoolBookings.forEach(p => { datePoolRevTotal += Number(p.totalAmount || 0); });
+
+    dateReport = {
+      date: activeDateFilter,
+      roomsBookedCount: roomsListForDate.length,
+      roomRevenue: dateRoomRevTotal,
+      poolPassesCount: datePoolBookings.length,
+      poolRevenue: datePoolRevTotal,
+      totalRevenue: dateRoomRevTotal + datePoolRevTotal,
+      roomsBooked: roomsListForDate
+    };
+
+    // Monthly Revenue History (retains monthly history even after 2-month recycling)
+    const monthlyMap = { ...archive.monthlySummary };
+    allBookings.forEach(b => {
+      if (b.status === BOOKING_STATUS.CANCELLED) return;
+      const bDate = (b.checkOut || b.createdAt || b.checkIn || '').split('T')[0];
+      const monthKey = bDate.substring(0, 7);
+      if (!monthlyMap[monthKey]) {
+        monthlyMap[monthKey] = {
+          month: monthKey,
+          roomRevenue: 0,
+          poolRevenue: 0,
+          totalRevenue: 0,
+          roomBookingsCount: 0,
+          poolPassesCount: 0
+        };
+      }
+      const rev = Number(b.advancePaid !== undefined ? b.advancePaid : b.totalAmount) || 0;
+      monthlyMap[monthKey].roomRevenue += rev;
+      monthlyMap[monthKey].totalRevenue += rev;
+      monthlyMap[monthKey].roomBookingsCount += 1;
+    });
+
+    poolBookings.forEach(p => {
+      const pDate = (p.date || p.createdAt || '').split('T')[0];
+      const monthKey = pDate.substring(0, 7);
+      if (!monthlyMap[monthKey]) {
+        monthlyMap[monthKey] = {
+          month: monthKey,
+          roomRevenue: 0,
+          poolRevenue: 0,
+          totalRevenue: 0,
+          roomBookingsCount: 0,
+          poolPassesCount: 0
+        };
+      }
+      const rev = Number(p.totalAmount || 0);
+      monthlyMap[monthKey].poolRevenue += rev;
+      monthlyMap[monthKey].totalRevenue += rev;
+      monthlyMap[monthKey].poolPassesCount += 1;
+    });
+
+    const monthlyHistory = Object.values(monthlyMap)
+      .sort((a, b) => b.month.localeCompare(a.month))
+      .map(m => {
+        const [y, mon] = m.month.split('-');
+        const dateObj = new Date(Number(y), Number(mon) - 1, 1);
+        const label = dateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        return {
+          ...m,
+          label
+        };
+      });
 
     // Combined recent transactions
     const combinedTransactions = [
@@ -1391,11 +1644,13 @@ const db = {
         item: `Room ${b.roomNumber} (${b.category || 'Deluxe'})`,
         customerName: b.customerName,
         phone: b.phone,
+        stayType: b.stayType || 'Family',
+        secondGuestName: b.secondGuestName || null,
         aadhaarNumber: b.aadhaarNumber || null,
         amount: Number(b.totalAmount || b.nightlyRate),
         paymentMethod: b.paymentMethod || 'Cash',
         paymentStatus: b.paymentStatus || 'Paid',
-        timestamp: b.createdAt || b.checkIn,
+        timestamp: b.checkOut || b.createdAt || b.checkIn,
         status: b.status,
         source: b.bookingSource || 'online'
       })),
@@ -1405,6 +1660,8 @@ const db = {
         item: `Pool Pass (${p.totalVisitors || p.adultCount} Guests, ${p.durationHours || 2}h)`,
         customerName: p.customerName || 'Walk-in Swimmer',
         phone: p.phone,
+        stayType: 'Pool',
+        secondGuestName: null,
         aadhaarNumber: null,
         amount: Number(p.totalAmount),
         paymentMethod: p.paymentMethod || 'Cash',
@@ -1415,10 +1672,14 @@ const db = {
       }))
     ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
+    const grandLifetimeRevenue = (archive.historicalTotalRevenue || 0) + totalRevenue;
+
     return {
       timeframe,
       summary: {
         totalRevenue,
+        grandLifetimeRevenue,
+        historicalArchivedRevenue: archive.historicalTotalRevenue || 0,
         roomRevenue,
         poolRevenue,
         totalEntries,
@@ -1426,9 +1687,12 @@ const db = {
         poolPassesCount: filteredPoolBookings.length,
         cashRevenue,
         upiRevenue,
-        cardRevenue
+        cardRevenue,
+        retentionPolicy: '60 Days (2 Months) Data Recycling Active'
       },
       dailyBreakdown,
+      dateReport,
+      monthlyHistory,
       recentTransactions: combinedTransactions.slice(0, 50)
     };
   }

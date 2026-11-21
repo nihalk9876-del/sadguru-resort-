@@ -198,11 +198,12 @@ exports.createPoolPass = async (req, res) => {
   }
 };
 
-// Comprehensive Financial & Booking Reports (Daily, Weekly, Monthly)
+// Comprehensive Financial & Booking Reports (Daily, Weekly, Monthly, Specific Date)
 exports.getReports = (req, res) => {
   try {
     const timeframe = req.query.timeframe || 'month';
-    const reports = db.getAdminReports(timeframe);
+    const targetDate = req.query.date || null;
+    const reports = db.getAdminReports(timeframe, targetDate);
     return res.json({
       success: true,
       reports
