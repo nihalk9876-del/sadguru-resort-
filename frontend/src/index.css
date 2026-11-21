@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-resort-cream text-resort-charcoal;
+    overflow-x: hidden;
+  }
+}
+
+/* Custom luxury scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #FAF7F2;
+}
+::-webkit-scrollbar-thumb {
+  background: #C5A059;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #A68138;
+}
+
+/* Luxury gold text gradient */
+.gold-gradient-text {
+  background: linear-gradient(135deg, #DFBE80 0%, #C5A059 50%, #9C782E 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.gold-gradient-bg {
+  background: linear-gradient(135deg, #DFC385 0%, #C5A059 50%, #A68138 100%);
+}
