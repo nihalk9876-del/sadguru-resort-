@@ -4,7 +4,7 @@ let socketInstance = null;
 
 export function getSocket() {
   if (!socketInstance) {
-    const serverUrl = import.meta.env.VITE_API_URL || window.location.origin;
+    const serverUrl = import.meta.env.VITE_API_URL || 'https://sadguru-resort-backend.onrender.com';
     socketInstance = io(serverUrl, {
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 10,

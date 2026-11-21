@@ -61,9 +61,9 @@ export default function AdminDashboard() {
         api.getAdminStats(),
         api.getRooms(),
         api.getAllBookings(),
-        fetch('/api/pool', { headers: { Authorization: `Bearer ${localStorage.getItem('sadguru_admin_token')}` } }).then(r => r.json()),
-        fetch('/api/banquet', { headers: { Authorization: `Bearer ${localStorage.getItem('sadguru_admin_token')}` } }).then(r => r.json()),
-        fetch('/api/lawn', { headers: { Authorization: `Bearer ${localStorage.getItem('sadguru_admin_token')}` } }).then(r => r.json()),
+        api.getPoolBookings(),
+        api.getBanquetBookings(),
+        api.getLawnBookings(),
         api.getPackages(),
         api.getSettings()
       ]);

@@ -18,7 +18,7 @@ export default function HeroSection({ onBookStay, onQuickSearch }) {
 
   return (
     <section className="relative min-h-[95vh] lg:min-h-screen flex flex-col justify-between pt-32 pb-14 px-4 sm:px-6 lg:px-8 overflow-hidden select-none">
-      
+
       {/* Real Sadguru Resort Photograph */}
       <div className="absolute inset-0 z-0">
         <img
@@ -35,7 +35,7 @@ export default function HeroSection({ onBookStay, onQuickSearch }) {
 
       {/* Main Hero Content */}
       <div className="relative z-10 max-w-5xl mx-auto w-full text-center my-auto flex-1 flex flex-col justify-center items-center">
-        
+
         {/* Refined Eyebrow */}
         <motion.div
           initial={{ opacity: 0, y: 15 }}

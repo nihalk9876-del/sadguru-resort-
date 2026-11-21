@@ -1,5 +1,5 @@
-const RAW_URL = import.meta.env.VITE_API_URL || '';
-const API_BASE = RAW_URL ? `${RAW_URL.replace(/\/+$/, '')}/api` : '/api';
+const RAW_URL = import.meta.env.VITE_API_URL || 'https://sadguru-resort-backend.onrender.com';
+const API_BASE = `${RAW_URL.replace(/\/+$/, '')}/api`;
 
 function getAuthHeaders() {
   const token = localStorage.getItem('sadguru_admin_token');
@@ -126,6 +126,21 @@ export const api = {
 
   getSettings: async () => {
     const res = await fetch(`${API_BASE}/admin/settings`);
+    return handleResponse(res);
+  },
+
+  getPoolBookings: async () => {
+    const res = await fetch(`${API_BASE}/pool`, { headers: getAuthHeaders() });
+    return handleResponse(res);
+  },
+
+  getBanquetBookings: async () => {
+    const res = await fetch(`${API_BASE}/banquet`, { headers: getAuthHeaders() });
+    return handleResponse(res);
+  },
+
+  getLawnBookings: async () => {
+    const res = await fetch(`${API_BASE}/lawn`, { headers: getAuthHeaders() });
     return handleResponse(res);
   },
 
