@@ -953,6 +953,7 @@ const db = {
       }
 
       const isOccupied = calculatedStatus === ROOM_STATUS.OCCUPIED || calculatedStatus === ROOM_STATUS.RESERVED;
+      const occupantBooking = activeBooking || (calculatedStatus === ROOM_STATUS.RESERVED ? upcomingBooking : null);
 
       return {
         id: room.id,
@@ -964,31 +965,31 @@ const db = {
         floor: room.floor || (String(room.roomNumber).startsWith('2') ? '2nd Floor' : '1st Floor'),
         status: calculatedStatus,
         rawStatus: room.status,
-        isOccupied,
-        occupant: isOccupied ? {
-          bookingId: activeBooking.id,
-          customerName: activeBooking.customerName,
-          phone: activeBooking.phone,
-          aadhaarNumber: activeBooking.aadhaarNumber || 'Not Recorded',
-          age: activeBooking.age || null,
-          dob: activeBooking.dob || null,
-          guests: activeBooking.guests || 2,
-          adults: activeBooking.adults || 2,
-          children: activeBooking.children || 0,
-          checkIn: activeBooking.checkIn,
-          checkInTime: activeBooking.checkInTime || '12:00 PM',
-          checkOut: activeBooking.checkOut,
-          checkOutTime: activeBooking.checkOutTime || '11:00 AM',
-          occupiedUntil: `${activeBooking.checkOut} ${activeBooking.checkOutTime || '11:00 AM'}`,
-          durationHours: activeBooking.durationHours || null,
-          allottedRate: activeBooking.nightlyRate || activeBooking.totalAmount,
-          totalAmount: activeBooking.totalAmount,
-          advancePaid: activeBooking.advancePaid,
-          remainingBalance: activeBooking.remainingBalance || 0,
-          paymentMethod: activeBooking.paymentMethod || 'Cash',
-          paymentStatus: activeBooking.paymentStatus || 'Paid',
-          bookingSource: activeBooking.bookingSource || 'walk-in',
-          status: activeBooking.status
+        isOccupied: Boolean(isOccupied && occupantBooking),
+        occupant: (isOccupied && occupantBooking) ? {
+          bookingId: occupantBooking.id,
+          customerName: occupantBooking.customerName,
+          phone: occupantBooking.phone,
+          aadhaarNumber: occupantBooking.aadhaarNumber || 'Not Recorded',
+          age: occupantBooking.age || null,
+          dob: occupantBooking.dob || null,
+          guests: occupantBooking.guests || 2,
+          adults: occupantBooking.adults || 2,
+          children: occupantBooking.children || 0,
+          checkIn: occupantBooking.checkIn,
+          checkInTime: occupantBooking.checkInTime || '12:00 PM',
+          checkOut: occupantBooking.checkOut,
+          checkOutTime: occupantBooking.checkOutTime || '11:00 AM',
+          occupiedUntil: `${occupantBooking.checkOut} ${occupantBooking.checkOutTime || '11:00 AM'}`,
+          durationHours: occupantBooking.durationHours || null,
+          allottedRate: occupantBooking.nightlyRate || occupantBooking.totalAmount,
+          totalAmount: occupantBooking.totalAmount,
+          advancePaid: occupantBooking.advancePaid,
+          remainingBalance: occupantBooking.remainingBalance || 0,
+          paymentMethod: occupantBooking.paymentMethod || 'Cash',
+          paymentStatus: occupantBooking.paymentStatus || 'Paid',
+          bookingSource: occupantBooking.bookingSource || 'walk-in',
+          status: occupantBooking.status
         } : null,
         upcoming: upcomingBooking ? {
           bookingId: upcomingBooking.id,
