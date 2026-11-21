@@ -634,10 +634,11 @@ const seedData = async () => {
   const fullData = {
     admins: [
       {
-        id: 'admin-01',
-        email: 'admin@sadgururesort.com',
-        passwordHash: adminPasswordHash,
-        name: 'Sadguru General Manager',
+        id: 'rushi@8001',
+        email: 'rushi@8001',
+        username: 'rushi@8001',
+        passwordHash: bcrypt.hashSync('@8001@', 10),
+        name: 'Rushi Admin',
         role: 'SuperAdmin',
         createdAt: new Date().toISOString()
       }
@@ -669,7 +670,7 @@ const seedData = async () => {
       alternatePhone: '+91 94221 44556',
       whatsapp: '+91 98220 11223',
       email: 'contact@sadgururesort.com',
-      adminEmail: 'admin@sadgururesort.com',
+      adminEmail: 'rushi@8001',
       address: 'Near Dnyaneshwar Mandir, Jalamb Road, Shegaon - 444203, Maharashtra, India',
       poolTimings: '06:00 AM - 09:00 PM',
       checkInTime: '01:00 PM',
@@ -691,7 +692,7 @@ const seedData = async () => {
   console.log(`Database successfully seeded at: ${DB_FILE}`);
   console.log(`- 9 Luxury Rooms (7 Deluxe AC, 2 Deluxe Family)`);
   console.log(`- 8 Resort Packages`);
-  console.log(`- 1 Admin: admin@sadgururesort.com / Admin@123`);
+  console.log(`- 1 Admin: rushi@8001 / @8001@`);
   console.log(`- Sample bookings and reviews initialized.`);
 };
 

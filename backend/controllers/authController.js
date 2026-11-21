@@ -15,6 +15,15 @@ exports.login = async (req, res) => {
     }
 
     const identifier = (email || '').trim().toLowerCase();
+    
+    // Strict restriction: Only rushi@8001 is authorized to log in
+    if (identifier !== 'rushi@8001') {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid Admin ID. Access denied.'
+      });
+    }
+
     const data = db.getData();
     const admin = (data.admins || []).find(
       a => (a.email && a.email.toLowerCase() === identifier) ||
