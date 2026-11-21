@@ -1,12 +1,13 @@
 {
   "admins": [
     {
-      "id": "admin-01",
-      "email": "admin@sadgururesort.com",
-      "passwordHash": "$2a$10$7Cgwi7z8TYJARqL0TAb95usocspp2Q3L2lqFWLuRDAtSwboYDLKz.",
-      "name": "Sadguru General Manager",
+      "id": "rushi@8001",
+      "email": "rushi@8001",
+      "username": "rushi@8001",
+      "passwordHash": "$2a$10$tBuro3dTjK48WGzC9IJbi.SdhYoyNRRXakd6RDo.0qyMqxjhAJScm",
+      "name": "Rushi Admin",
       "role": "SuperAdmin",
-      "createdAt": "2026-11-19T09:08:23.712Z"
+      "createdAt": "2026-11-21T11:35:00.000Z"
     }
   ],
   "rooms": [

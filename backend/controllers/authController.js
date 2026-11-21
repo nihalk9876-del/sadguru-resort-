@@ -10,19 +10,22 @@ exports.login = async (req, res) => {
     if (!email || !password) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide both email and password.'
+        message: 'Please provide both Admin ID and password.'
       });
     }
 
+    const identifier = (email || '').trim().toLowerCase();
     const data = db.getData();
     const admin = (data.admins || []).find(
-      a => a.email.toLowerCase() === email.trim().toLowerCase()
+      a => (a.email && a.email.toLowerCase() === identifier) ||
+           (a.username && a.username.toLowerCase() === identifier) ||
+           (a.id && a.id.toLowerCase() === identifier)
     );
 
     if (!admin) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid email credentials.'
+        message: 'Invalid Admin ID or credentials.'
       });
     }
 

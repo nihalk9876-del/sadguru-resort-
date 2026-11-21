@@ -5,8 +5,8 @@ import { api } from '../services/api';
 
 export default function AdminLogin() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState('admin@sadgururesort.com');
-  const [password, setPassword] = useState('Admin@123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -60,7 +60,7 @@ export default function AdminLogin() {
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md relative z-10 px-4">
         <div className="bg-resort-cream rounded-3xl p-8 sm:p-10 shadow-2xl border border-resort-gold/30">
-          
+
           {errorMsg && (
             <div className="mb-6 p-3.5 rounded-xl bg-red-100 border border-red-300 text-red-900 text-xs font-semibold">
               {errorMsg}
@@ -70,18 +70,18 @@ export default function AdminLogin() {
           <form onSubmit={handleLogin} className="space-y-5">
             <div>
               <label className="text-[11px] uppercase tracking-wider text-gray-600 font-bold block mb-1">
-                Admin Email / User ID
+                Admin ID
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400">
                   <Mail className="w-4 h-4" />
                 </div>
                 <input
-                  type="email"
+                  type="text"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@sadgururesort.com"
+                  placeholder="Enter Admin ID (e.g. rushi@8001)"
                   className="w-full text-xs font-semibold bg-white border border-resort-beigeDark rounded-xl pl-10 pr-3.5 py-3 text-resort-charcoal focus:outline-none focus:border-resort-gold"
                 />
               </div>
@@ -111,24 +111,6 @@ export default function AdminLogin() {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-            </div>
-
-            {/* Quick Demo Credentials Badge */}
-            <div className="p-3 rounded-xl bg-resort-beige/60 border border-resort-beigeDark text-xs flex items-center justify-between">
-              <div>
-                <span className="text-[10px] text-gray-500 uppercase font-bold block">Default Test Access:</span>
-                <span className="font-mono text-resort-oliveDeep">admin@sadgururesort.com / Admin@123</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setEmail('admin@sadgururesort.com');
-                  setPassword('Admin@123');
-                }}
-                className="text-[10px] font-bold text-resort-gold hover:underline uppercase"
-              >
-                Auto-fill
-              </button>
             </div>
 
             <button

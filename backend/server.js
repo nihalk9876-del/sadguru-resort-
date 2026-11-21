@@ -87,7 +87,7 @@ async function startServer() {
     console.log(`=================================================`);
     console.log(`  SADGURU RESORT API & SOCKET.IO SERVER`);
     console.log(`  Live on: http://localhost:${listenPort}`);
-    console.log(`  Admin credentials: admin@sadgururesort.com / Admin@123`);
+    console.log(`  Admin Portal Protected with Authenticated Access`);
     console.log(`=================================================`);
   });
 }
