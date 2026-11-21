@@ -64,31 +64,52 @@ export default function PhotoGallerySection() {
     : photos.filter(p => p.category.toLowerCase() === filter.toLowerCase());
 
   return (
-    <section id="gallery" className="py-24 bg-resort-cream relative">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <section id="gallery" className="py-24 sm:py-32 relative overflow-hidden select-none text-white">
+      {/* Background Image: Shree Sadguru Swimming Pool (Repeated, Little dark & atmospheric) */}
+      <div className="absolute inset-0 z-0">
+        <img
+          src="/sadguru-pool.jpg"
+          alt="Sadguru Swimming Pool Atmosphere"
+          className="w-full h-full object-cover object-center brightness-[0.78] contrast-[1.08]"
+          onError={(e) => {
+            e.currentTarget.style.display = 'none';
+          }}
+        />
+        {/* Ambient Dark Overlay for flawless contrast and rich theme */}
+        <div className="absolute inset-0 bg-black/45 pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#141d15]/85 via-black/25 to-[#141d15]/85 pointer-events-none" />
+      </div>
+
+      {/* Seamless Smooth Bleed at the Top (Upside) blending with Facilities section above */}
+      <div className="absolute top-0 inset-x-0 h-44 sm:h-56 bg-gradient-to-b from-[#141d15] via-[#141d15]/60 to-transparent pointer-events-none z-10" />
+
+      {/* Seamless Smooth Blend at the Bottom transitioning to Testimonials Section */}
+      <div className="absolute bottom-0 inset-x-0 h-44 sm:h-56 bg-gradient-to-b from-transparent via-[#141d15]/60 to-[#141d15] pointer-events-none z-10" />
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-20">
 
         {/* Section Heading */}
         <div className="text-center max-w-3xl mx-auto space-y-3 mb-12">
-          <span className="text-resort-gold uppercase tracking-[0.25em] text-xs font-semibold block">
-            Visual Splendour
+          <span className="text-resort-gold uppercase tracking-[0.25em] text-xs font-bold block drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+            ✦ Visual Splendour ✦
           </span>
-          <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl font-bold text-resort-oliveDeep">
+          <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl font-bold text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)]">
             Sadguru Photo Gallery
           </h2>
-          <p className="font-serif italic text-base sm:text-lg text-gray-600">
+          <p className="font-serif italic text-base sm:text-lg text-white/90 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)] font-light">
             A glimpse into the serene architecture, azure waters, manicured landscapes, and joyous celebrations at Sadguru Resort.
           </p>
         </div>
 
         {/* Filter Pills */}
-        <div className="flex flex-wrap items-center justify-center gap-2 mb-10">
+        <div className="flex flex-wrap items-center justify-center gap-2.5 mb-10">
           {categories.map((cat) => (
             <button
               key={cat}
               onClick={() => setFilter(cat)}
-              className={`text-xs uppercase tracking-wider font-semibold px-5 py-2 rounded-full transition-all ${filter === cat
-                ? 'gold-gradient-bg text-resort-oliveDeep shadow-sm'
-                : 'bg-resort-beige/60 text-resort-charcoal/70 hover:text-resort-charcoal hover:bg-resort-beige'
+              className={`text-xs uppercase tracking-wider font-semibold px-5 py-2.5 rounded-full transition-all ${filter === cat
+                ? 'gold-gradient-bg text-resort-oliveDeep font-bold shadow-md'
+                : 'bg-[#141d15]/80 backdrop-blur-md border border-resort-gold/30 text-white/90 hover:text-resort-gold hover:border-resort-gold'
                 }`}
             >
               {cat}
@@ -106,14 +127,14 @@ export default function PhotoGallerySection() {
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.4 }}
               onClick={() => setLightboxImg(photo)}
-              className="relative h-64 rounded-3xl overflow-hidden cursor-pointer group shadow-luxury border-2 border-white"
+              className="relative h-64 rounded-3xl overflow-hidden cursor-pointer group shadow-2xl border-2 border-resort-gold/40 hover:border-resort-gold transition-all"
             >
               <img
                 src={photo.url}
                 alt={photo.title}
                 className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-resort-oliveDeep/85 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-6 text-white">
+              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-6 text-white">
                 <span className="text-[10px] uppercase tracking-widest text-resort-gold font-bold">
                   {photo.category}
                 </span>

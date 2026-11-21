@@ -59,7 +59,7 @@ export default function FacilitiesSection() {
       <div className="absolute top-0 inset-x-0 h-44 sm:h-56 bg-gradient-to-b from-[#141d15] via-[#141d15]/60 to-transparent pointer-events-none z-10" />
 
       {/* Seamless Smooth Blend at the Bottom transitioning to Photo Gallery Section */}
-      <div className="absolute bottom-0 inset-x-0 h-44 sm:h-56 bg-gradient-to-b from-transparent via-[#FAF7F2]/70 to-[#FAF7F2] pointer-events-none z-10" />
+      <div className="absolute bottom-0 inset-x-0 h-44 sm:h-56 bg-gradient-to-b from-transparent via-[#141d15]/60 to-[#141d15] pointer-events-none z-10" />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-20">
         

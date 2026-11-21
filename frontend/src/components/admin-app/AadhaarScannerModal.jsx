@@ -276,7 +276,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
     }
 
     // 2. EXTRACT DATE OF BIRTH (DOB)
-    const dobRegex = /(?:DOB|Date of Birth|जन्म तारीख|जन्म वर्ष|Year of Birth)[:\s]*([0-9]{2}[\/\-\.][0-9]{2}[\/\-\.][0-9]{4}|[0-9]{4})/i;
+    const dobRegex = /(?:DOB|Date\s*of\s*Birth|जन्म\s*तारीख|जन्म\s*वर्ष|Year\s*of\s*Birth)[:\s]*([0-9]{2}[\/\-\.][0-9]{2}[\/\-\.][0-9]{4}|[0-9]{4})/i;
     const dobMatch = text.match(dobRegex);
     
     if (dobMatch) {
@@ -299,53 +299,147 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
     else if (/\b(?:FEMALE|महिला)\b/i.test(text)) gender = 'Female';
     else if (/\bTRANSGENDER\b/i.test(text)) gender = 'Transgender';
 
-    // 5. EXTRACT GUEST FULL NAME - PRIORITIZING MARATHI SCRIPT AS REQUIRED
+    // 5. EXTRACT GUEST FULL NAME - ANCHORED BEFORE DOB & BELOW GOVERNMENT OF INDIA HEADER
+    // On Indian Aadhaar cards, the guest name (Marathi & English) is always physically situated
+    // immediately preceding the DOB line, and below "Government of India / भारत सरकार"
+
+    // Find the DOB line index in lines array
+    let dobLineIndex = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (/(?:DOB|Date\s*of\s*Birth|जन्म\s*तारीख|जन्म\s*वर्ष|Year\s*of\s*Birth)/i.test(lines[i]) ||
+          /\b(0[1-9]|[12][0-9]|3[01])[\/\-\.](0[1-9]|1[012])[\/\-\.](19\d\d|20\d\d)\b/.test(lines[i])) {
+        dobLineIndex = i;
+        break;
+      }
+    }
+
+    // Find the Government of India / Header index (lines above or at this are headers, not person names)
+    let headerLineIndex = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (/(?:Government\s*of\s*India|भारत\s*सरकार|Unique\s*Identification|Authority\s*of\s*India|विशिष्ट\s*ओळख|Enrolment|Enrollment)/i.test(lines[i])) {
+        if (dobLineIndex === -1 || i < dobLineIndex) {
+          headerLineIndex = Math.max(headerLineIndex, i);
+        }
+      }
+    }
+
     const marathiExclude = [
       'भारत', 'सरकार', 'विशिष्ट', 'ओळख', 'प्राधिकरण', 'माझे', 'माझी', 
       'आधार', 'जन्म', 'तारीख', 'वर्ष', 'पुरुष', 'महिला', 'पत्ता', 'नोंदणी', 
-      'दिनांक', 'मदत', 'हेल्पलाइन', 'शासन', 'महाराष्ट्र'
+      'दिनांक', 'मदत', 'हेल्पलाइन', 'शासन', 'महाराष्ट्र', 'नाव'
     ];
 
     const englishExclude = [
       'GOVERNMENT', 'INDIA', 'UNIQUE', 'IDENTIFICATION', 'AUTHORITY', 
       'ENROLMENT', 'ENROLLMENT', 'DOB', 'DATE', 'BIRTH', 'YEAR', 'MALE', 
-      'FEMALE', 'TRANSGENDER', 'HELP', 'UIDAI', 'WWW', 'AADHAAR', 'VID', 
+      'FEMALE', 'TRANSGENDER', 'HELP', 'UIDAI', 'WWW', 'AADHAAR', 'AAD', 'DAA', 'VID', 
       'FATHER', 'HUSBAND', 'ADDRESS', 'MERI', 'MERA', 'PEHCHAN', 'PO', 
-      'INCOME', 'TAX', 'DEPARTMENT', 'STATE', 'DIST'
+      'INCOME', 'TAX', 'DEPARTMENT', 'STATE', 'DIST', 'CARD', 'SIGNATURE', 'NUMBER', 'NO'
     ];
 
-    // Priority 1: Search for Marathi (Devanagari \u0900-\u097F) Name line
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (/[\u0900-\u097F]/.test(line)) {
-        const cleanMarathi = line.replace(/[^\u0900-\u097F\s\.]/g, ' ').replace(/\s+/g, ' ').trim();
-        const mWords = cleanMarathi.split(/\s+/).filter(w => w.length > 1);
+    // Helper: Clean Marathi text candidate
+    const cleanMarathiCandidate = (raw) => {
+      let clean = raw
+        .replace(/[^\u0900-\u097F\s\.]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      clean = clean.replace(/^[^\u0900-\u097F\s]{1,2}\s+/, '').trim();
+      return clean;
+    };
 
+    // Helper: Clean English text candidate, stripping OCR noise prefixes (e.g. "P ", "I ", "> ", "1 ")
+    const cleanEnglishCandidate = (raw) => {
+      let clean = raw
+        // Remove leading non-letter symbols
+        .replace(/^[^a-zA-Z]+/, '')
+        // Remove leading 1-2 character noise prefix e.g. "P ", "I ", "1 ", "> ", "P. "
+        .replace(/^[a-zA-Z0-9\W_]{1,2}\s+/, '')
+        // Remove trailing non-letters
+        .replace(/[^a-zA-Z\s\.]+$/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      return clean;
+    };
+
+    // Build candidate indices: priority search backwards directly from the line above DOB
+    const candidateIndices = [];
+    if (dobLineIndex !== -1) {
+      for (let i = dobLineIndex - 1; i > headerLineIndex; i--) {
+        candidateIndices.push(i);
+      }
+    } else {
+      for (let i = headerLineIndex + 1; i < lines.length; i++) {
+        candidateIndices.push(i);
+      }
+    }
+
+    // Step A: Search for Marathi Name (Devanagari \u0900-\u097F)
+    for (const idx of candidateIndices) {
+      const raw = lines[idx];
+      if (/[\u0900-\u097F]/.test(raw)) {
+        const cleaned = cleanMarathiCandidate(raw);
+        const mWords = cleaned.split(/\s+/).filter(w => w.length > 1);
         if (mWords.length >= 2 && mWords.length <= 4) {
           const hasExcluded = mWords.some(w => marathiExclude.some(ex => w.includes(ex)));
-          if (!hasExcluded && cleanMarathi.length >= 4) {
-            marathiName = cleanMarathi;
+          if (!hasExcluded && cleaned.length >= 4) {
+            marathiName = cleaned;
             break;
           }
         }
       }
     }
 
-    // Priority 2: Search for English Name line (as secondary/fallback)
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].replace(/[^a-zA-Z\s]/g, '').trim();
-      const words = line.split(/\s+/).filter(w => w.length > 1);
+    // Fallback: If not found in immediate candidates, check any line before DOB
+    if (!marathiName) {
+      for (let i = 0; i < lines.length; i++) {
+        if (dobLineIndex !== -1 && i >= dobLineIndex) continue;
+        const raw = lines[i];
+        if (/[\u0900-\u097F]/.test(raw)) {
+          const cleaned = cleanMarathiCandidate(raw);
+          const mWords = cleaned.split(/\s+/).filter(w => w.length > 1);
+          if (mWords.length >= 2 && mWords.length <= 4) {
+            const hasExcluded = mWords.some(w => marathiExclude.some(ex => w.includes(ex)));
+            if (!hasExcluded && cleaned.length >= 4) {
+              marathiName = cleaned;
+              break;
+            }
+          }
+        }
+      }
+    }
 
+    // Step B: Search for English Name (anchor-inspected immediately above DOB)
+    for (const idx of candidateIndices) {
+      const raw = lines[idx];
+      const cleaned = cleanEnglishCandidate(raw);
+      const words = cleaned.split(/\s+/).filter(w => w.length > 1);
       if (words.length >= 2 && words.length <= 4) {
         const hasKeyword = words.some(w => englishExclude.includes(w.toUpperCase()));
-        if (!hasKeyword && line.length >= 5) {
-          englishName = line;
+        if (!hasKeyword && cleaned.length >= 4) {
+          englishName = cleaned;
           break;
         }
       }
     }
 
-    // As requested: calculate only the Marathi one when present, fallback to English
+    // Fallback English search if candidate loop missed
+    if (!englishName) {
+      for (let i = headerLineIndex + 1; i < lines.length; i++) {
+        if (dobLineIndex !== -1 && i >= dobLineIndex) continue;
+        const raw = lines[i];
+        const cleaned = cleanEnglishCandidate(raw);
+        const words = cleaned.split(/\s+/).filter(w => w.length > 1);
+        if (words.length >= 2 && words.length <= 4) {
+          const hasKeyword = words.some(w => englishExclude.includes(w.toUpperCase()));
+          if (!hasKeyword && cleaned.length >= 4) {
+            englishName = cleaned;
+            break;
+          }
+        }
+      }
+    }
+
+    // As requested: calculate only the Marathi one when validly present, fallback to clean English
     name = marathiName || englishName || '';
 
     return {
@@ -357,7 +451,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
       gender,
       aadhaarNumber,
       source: marathiName ? 'Aadhaar Card (Marathi)' : 'Printed Card OCR',
-      verified: !!(name && aadhaarNumber)
+      verified: !!(name && (dob || aadhaarNumber))
     };
   };
 
@@ -576,7 +670,9 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[10px] text-slate-500 uppercase font-mono block">
-                      {scannedData.marathiName ? 'Scanned Marathi Name (मराठी नाव)' : 'Scanned Full Name'}
+                      {scannedData.marathiName && scannedData.name === scannedData.marathiName
+                        ? 'Scanned Marathi Name (मराठी नाव)'
+                        : 'Scanned Full Name'}
                     </span>
                     {scannedData.englishName && scannedData.marathiName && (
                       <button
@@ -585,9 +681,9 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
                           const nextName = scannedData.name === scannedData.marathiName ? scannedData.englishName : scannedData.marathiName;
                           setScannedData({ ...scannedData, name: nextName });
                         }}
-                        className="text-[10px] text-amber-700 font-semibold hover:underline"
+                        className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold hover:bg-amber-200 transition"
                       >
-                        {scannedData.name === scannedData.marathiName ? `English: ${scannedData.englishName}` : `Marathi: ${scannedData.marathiName}`}
+                        {scannedData.name === scannedData.marathiName ? `Switch to English: ${scannedData.englishName}` : `Switch to Marathi: ${scannedData.marathiName}`}
                       </button>
                     )}
                   </div>

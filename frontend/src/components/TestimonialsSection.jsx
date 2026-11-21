@@ -33,17 +33,38 @@ export default function TestimonialsSection({ reviews = [] }) {
   ];
 
   return (
-    <section className="py-24 bg-resort-creamDark relative">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <section className="py-24 sm:py-32 relative overflow-hidden select-none text-white">
+      {/* Background Image: Sadguru Resort Main Entrance Arch & Grounds (Little dark & atmospheric) */}
+      <div className="absolute inset-0 z-0">
+        <img
+          src="/sadguru-main.jpg"
+          alt="Sadguru Resort Entrance Atmosphere"
+          className="w-full h-full object-cover object-[center_35%] brightness-[0.78] contrast-[1.08]"
+          onError={(e) => {
+            e.currentTarget.style.display = 'none';
+          }}
+        />
+        {/* Ambient Dark Overlay to make it rich with perfect contrast */}
+        <div className="absolute inset-0 bg-black/45 pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#141d15]/85 via-black/25 to-[#141d15]/85 pointer-events-none" />
+      </div>
+
+      {/* Seamless Smooth Bleed at the Top (Upside) blending with Photo Gallery section above */}
+      <div className="absolute top-0 inset-x-0 h-44 sm:h-56 bg-gradient-to-b from-[#141d15] via-[#141d15]/60 to-transparent pointer-events-none z-10" />
+
+      {/* Seamless Smooth Blend at the Bottom transitioning to Location Section */}
+      <div className="absolute bottom-0 inset-x-0 h-44 sm:h-56 bg-gradient-to-b from-transparent via-[#141d15]/60 to-[#141d15] pointer-events-none z-10" />
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-20">
         
         <div className="text-center max-w-3xl mx-auto space-y-3 mb-16">
-          <span className="text-resort-gold uppercase tracking-[0.25em] text-xs font-semibold block">
-            Guest Testimonials
+          <span className="text-resort-gold uppercase tracking-[0.25em] text-xs font-bold block drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+            ✦ Guest Testimonials ✦
           </span>
-          <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl font-bold text-resort-oliveDeep">
+          <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl font-bold text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)]">
             Words From Our Honoured Guests
           </h2>
-          <p className="font-serif italic text-base sm:text-lg text-gray-600">
+          <p className="font-serif italic text-base sm:text-lg text-white/90 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)] font-light">
             Real stories of leisure, celebration, and cherished memories shared by guests who experienced Sadguru Resort.
           </p>
         </div>
@@ -52,7 +73,7 @@ export default function TestimonialsSection({ reviews = [] }) {
           {displayReviews.map((rev) => (
             <div
               key={rev.id}
-              className="bg-white p-8 rounded-3xl border border-resort-beigeDark/80 shadow-luxury hover:shadow-luxury-lg transition-all flex flex-col justify-between relative group"
+              className="bg-[#141d15]/90 backdrop-blur-xl p-8 rounded-3xl border border-resort-gold/35 shadow-2xl hover:border-resort-gold hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between relative group text-white"
             >
               <Quote className="w-10 h-10 text-resort-gold/20 absolute top-6 right-6" />
               
@@ -64,21 +85,21 @@ export default function TestimonialsSection({ reviews = [] }) {
                   ))}
                 </div>
 
-                <p className="font-serif italic text-sm text-gray-700 leading-relaxed">
+                <p className="font-serif italic text-sm text-gray-200 leading-relaxed">
                   "{rev.comment}"
                 </p>
               </div>
 
-              <div className="pt-6 mt-6 border-t border-resort-beigeDark/60 flex items-center justify-between">
+              <div className="pt-6 mt-6 border-t border-resort-gold/20 flex items-center justify-between">
                 <div>
-                  <h4 className="font-display font-bold text-sm text-resort-oliveDeep">
+                  <h4 className="font-display font-bold text-sm text-white">
                     {rev.name}
                   </h4>
-                  <span className="text-[11px] text-gray-500">
+                  <span className="text-[11px] text-gray-400">
                     {rev.city} • {rev.stayType}
                   </span>
                 </div>
-                <span className="text-[10px] uppercase tracking-wider text-resort-gold font-bold bg-resort-gold/10 px-2.5 py-1 rounded-full">
+                <span className="text-[10px] uppercase tracking-wider text-resort-gold font-bold bg-resort-gold/15 border border-resort-gold/30 px-2.5 py-1 rounded-full">
                   Verified Stay
                 </span>
               </div>

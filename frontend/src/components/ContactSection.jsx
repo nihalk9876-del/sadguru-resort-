@@ -39,17 +39,22 @@ export default function ContactSection() {
   };
 
   return (
-    <section id="contact" className="py-24 bg-resort-cream relative">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <section id="contact" className="py-24 bg-[#141d15] relative overflow-hidden text-white">
+      {/* Top subtle blend matching FAQ bottom */}
+      <div className="absolute top-0 inset-x-0 h-44 sm:h-56 bg-gradient-to-b from-[#141d15] via-[#141d15]/80 to-transparent pointer-events-none z-10" />
+      {/* Bottom subtle blend matching Footer */}
+      <div className="absolute bottom-0 inset-x-0 h-28 bg-gradient-to-b from-transparent to-resort-oliveDeep pointer-events-none z-10" />
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-20">
         
         <div className="text-center max-w-3xl mx-auto space-y-3 mb-16">
           <span className="text-resort-gold uppercase tracking-[0.25em] text-xs font-semibold block">
             Reservation Assistance & Enquiries
           </span>
-          <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl font-bold text-resort-oliveDeep">
+          <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl font-bold text-white">
             Connect with Sadguru Resort
           </h2>
-          <p className="font-serif italic text-base sm:text-lg text-gray-600">
+          <p className="font-serif italic text-base sm:text-lg text-gray-300">
             Our reservation and concierge team is available round-the-clock to assist with room selections, event dates, and customized packages.
           </p>
         </div>
@@ -57,7 +62,7 @@ export default function ContactSection() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-stretch">
           
           {/* Quick Channels & Info (5 cols) */}
-          <div className="lg:col-span-5 bg-resort-oliveDeep text-resort-cream p-8 sm:p-10 rounded-3xl shadow-luxury-lg space-y-8 flex flex-col justify-between relative overflow-hidden">
+          <div className="lg:col-span-5 bg-[#141d15]/90 backdrop-blur-xl border border-resort-gold/35 text-resort-cream p-8 sm:p-10 rounded-3xl shadow-2xl space-y-8 flex flex-col justify-between relative overflow-hidden">
             <div className="absolute top-0 right-0 -mr-10 -mt-10 w-44 h-44 rounded-full bg-resort-gold/10 pointer-events-none" />
 
             <div className="space-y-6">
@@ -145,25 +150,25 @@ export default function ContactSection() {
           </div>
 
           {/* Contact Message Form (7 cols) */}
-          <div className="lg:col-span-7 bg-white p-8 sm:p-10 rounded-3xl border border-resort-beigeDark/80 shadow-luxury space-y-6">
+          <div className="lg:col-span-7 bg-[#141d15]/90 backdrop-blur-xl border border-resort-gold/35 shadow-2xl p-8 sm:p-10 rounded-3xl space-y-6 text-white">
             <div>
               <span className="text-xs uppercase tracking-widest text-resort-gold font-bold block mb-1">
                 Drop Us a Message
               </span>
-              <h3 className="font-display text-2xl font-bold text-resort-oliveDeep">
+              <h3 className="font-display text-2xl font-bold text-white">
                 Inquire or Request a Custom Proposal
               </h3>
             </div>
 
             {successMsg && (
-              <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+              <div className="p-4 rounded-xl bg-emerald-900/50 border border-emerald-500/50 text-emerald-200 text-xs font-semibold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
                 <span>{successMsg}</span>
               </div>
             )}
 
             {errorMsg && (
-              <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs font-semibold">
+              <div className="p-4 rounded-xl bg-red-900/50 border border-red-500/50 text-red-200 text-xs font-semibold">
                 {errorMsg}
               </div>
             )}
@@ -171,7 +176,7 @@ export default function ContactSection() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[11px] uppercase tracking-wider text-gray-500 font-semibold block mb-1">
+                  <label className="text-[11px] uppercase tracking-wider text-resort-gold/90 font-semibold block mb-1">
                     Your Full Name *
                   </label>
                   <input
@@ -180,12 +185,12 @@ export default function ContactSection() {
                     placeholder="e.g. Shrikant Joshi"
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="w-full text-xs font-medium bg-resort-cream border border-resort-beigeDark rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-resort-gold"
+                    className="w-full text-xs font-medium bg-black/40 border border-resort-gold/30 rounded-xl px-3.5 py-2.5 text-white placeholder-gray-400 focus:outline-none focus:border-resort-gold"
                   />
                 </div>
 
                 <div>
-                  <label className="text-[11px] uppercase tracking-wider text-gray-500 font-semibold block mb-1">
+                  <label className="text-[11px] uppercase tracking-wider text-resort-gold/90 font-semibold block mb-1">
                     Contact Phone *
                   </label>
                   <input
@@ -194,14 +199,14 @@ export default function ContactSection() {
                     placeholder="+91 98220 00000"
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    className="w-full text-xs font-medium bg-resort-cream border border-resort-beigeDark rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-resort-gold"
+                    className="w-full text-xs font-medium bg-black/40 border border-resort-gold/30 rounded-xl px-3.5 py-2.5 text-white placeholder-gray-400 focus:outline-none focus:border-resort-gold"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[11px] uppercase tracking-wider text-gray-500 font-semibold block mb-1">
+                  <label className="text-[11px] uppercase tracking-wider text-resort-gold/90 font-semibold block mb-1">
                     Email Address
                   </label>
                   <input
@@ -209,31 +214,31 @@ export default function ContactSection() {
                     placeholder="shrikant@example.com"
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="w-full text-xs font-medium bg-resort-cream border border-resort-beigeDark rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-resort-gold"
+                    className="w-full text-xs font-medium bg-black/40 border border-resort-gold/30 rounded-xl px-3.5 py-2.5 text-white placeholder-gray-400 focus:outline-none focus:border-resort-gold"
                   />
                 </div>
 
                 <div>
-                  <label className="text-[11px] uppercase tracking-wider text-gray-500 font-semibold block mb-1">
+                  <label className="text-[11px] uppercase tracking-wider text-resort-gold/90 font-semibold block mb-1">
                     Inquiry Topic
                   </label>
                   <select
                     value={formData.subject}
                     onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
-                    className="w-full text-xs font-medium bg-resort-cream border border-resort-beigeDark rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-resort-gold"
+                    className="w-full text-xs font-medium bg-black/40 border border-resort-gold/30 rounded-xl px-3.5 py-2.5 text-white placeholder-gray-400 focus:outline-none focus:border-resort-gold"
                   >
-                    <option value="Room & Stay Booking">Room & Stay Booking (9 Rooms)</option>
-                    <option value="Banquet Hall Wedding Function">Banquet Hall Wedding Function</option>
-                    <option value="Green Lawn Event">Green Lawn Event</option>
-                    <option value="Swimming Pool Day Passes">Swimming Pool Day Passes</option>
-                    <option value="Corporate Offsite Package">Corporate Offsite Package</option>
-                    <option value="Other Inquiries">Other Inquiries</option>
+                    <option value="Room & Stay Booking" className="bg-[#141d15] text-white">Room & Stay Booking (9 Rooms)</option>
+                    <option value="Banquet Hall Wedding Function" className="bg-[#141d15] text-white">Banquet Hall Wedding Function</option>
+                    <option value="Green Lawn Event" className="bg-[#141d15] text-white">Green Lawn Event</option>
+                    <option value="Swimming Pool Day Passes" className="bg-[#141d15] text-white">Swimming Pool Day Passes</option>
+                    <option value="Corporate Offsite Package" className="bg-[#141d15] text-white">Corporate Offsite Package</option>
+                    <option value="Other Inquiries" className="bg-[#141d15] text-white">Other Inquiries</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="text-[11px] uppercase tracking-wider text-gray-500 font-semibold block mb-1">
+                <label className="text-[11px] uppercase tracking-wider text-resort-gold/90 font-semibold block mb-1">
                   Message / Special Requirements *
                 </label>
                 <textarea
@@ -242,7 +247,7 @@ export default function ContactSection() {
                   placeholder="Tell us about your expected dates, number of guests, or special requests..."
                   value={formData.message}
                   onChange={(e) => setFormData({ ...formData, message: e.target.value })}
-                  className="w-full text-xs font-medium bg-resort-cream border border-resort-beigeDark rounded-xl p-3 focus:outline-none focus:border-resort-gold"
+                  className="w-full text-xs font-medium bg-black/40 border border-resort-gold/30 rounded-xl p-3 text-white placeholder-gray-400 focus:outline-none focus:border-resort-gold"
                 />
               </div>
 
