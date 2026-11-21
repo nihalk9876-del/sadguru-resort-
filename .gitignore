@@ -6,6 +6,11 @@ node_modules/
 dist/
 build/
 */dist/
+.gradle/
+*/.gradle/
+*/*/build/
+*.apk
+*.aab
 
 # Environment variables (Never commit real credentials to GitHub)
 .env

@@ -36,47 +36,50 @@ export default function SwimmingPoolSection({ onOpenPoolBooking }) {
   ];
 
   return (
-    <section id="swimming-pool" className="py-24 sm:py-32 relative overflow-hidden select-none text-white">
-      {/* Complete Section Background: 2nd Image (Sadguru Night View - slightly darker than original) */}
+    <section id="swimming-pool" className="relative py-24 sm:py-32 overflow-hidden text-white select-none">
+      {/* Complete Section Background: Sadguru Walkway & Lantern Pathway (darker than original) */}
       <div className="absolute inset-0 z-0">
         <img
-          src="/sadguru-night-bg.jpg"
-          alt="Shree Sadguru Resort Night View"
-          className="w-full h-full object-cover object-center filter brightness-90"
+          src="/sadguru-walkway.jpg"
+          alt="Sadguru Resort Walkway Ambiance"
+          className="w-full h-full object-cover object-center brightness-[0.78] contrast-[1.05]"
+          onError={(e) => {
+            e.currentTarget.style.display = 'none';
+          }}
         />
-        {/* Dark overlay: slightly darker than original */}
-        <div className="absolute inset-0 bg-black/45 pointer-events-none" />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0e140f]/80 via-black/35 to-black/60 pointer-events-none" />
+        {/* Ambient Dark Overlay to make it deeper & darker than original */}
+        <div className="absolute inset-0 bg-black/40 pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#141d15]/80 via-black/25 to-[#141d15]/80 pointer-events-none" />
       </div>
 
+      {/* Seamless Smooth Blend at the Top merging with Accommodation Section above */}
+      <div className="absolute top-0 inset-x-0 h-40 bg-gradient-to-b from-[#141d15] via-[#141d15]/60 to-transparent pointer-events-none z-10" />
+
+      {/* Seamless Smooth Blend at the Bottom transitioning to Banquet Section */}
+      <div className="absolute bottom-0 inset-x-0 h-40 bg-gradient-to-b from-transparent via-[#FAF7F2]/60 to-[#FAF7F2] pointer-events-none z-10" />
+
       {/* Decorative water wave accent */}
-      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-cyan-400/40 to-transparent z-10" />
-
-      {/* Smooth blending at the top with Accommodation section */}
-      <div className="absolute top-0 inset-x-0 h-36 bg-gradient-to-b from-[#0e140f] via-[#0e140f]/60 to-transparent pointer-events-none z-10" />
-
-      {/* Smooth blending at the bottom into Banquet Hall section */}
-      <div className="absolute bottom-0 inset-x-0 h-36 bg-gradient-to-b from-transparent via-black/40 to-[#FAF7F2] pointer-events-none z-10" />
+      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-cyan-400/50 to-transparent z-20" />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-20">
         
         {/* Section Heading */}
         <div className="text-center max-w-3xl mx-auto space-y-3 mb-16">
-          <span className="text-resort-gold uppercase tracking-[0.25em] text-xs font-bold block drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
-            Aquatic Sanctuary
+          <span className="text-resort-gold uppercase tracking-[0.25em] text-xs font-bold block drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+            ✦ Aquatic Sanctuary ✦
           </span>
-          <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl font-bold text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">
+          <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl font-bold text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)]">
             Experience Our Luxurious Swimming Pool
           </h2>
-          <p className="font-serif italic text-base sm:text-lg text-white/90 drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)] font-light">
+          <p className="font-serif italic text-base sm:text-lg text-white/90 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)] font-light">
             Immerse yourself in crystal turquoise waters surrounded by tropical flora. An idyllic spot for sunbathing, swimming laps, or gentle evening relaxation.
           </p>
         </div>
 
         {/* Complimentary Room Guest Banner */}
-        <div className="mb-12 p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-resort-oliveDeep/95 via-resort-olive/90 to-resort-oliveDeep/95 backdrop-blur-md text-resort-cream border border-resort-gold/50 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="mb-12 p-4 rounded-2xl bg-gradient-to-r from-resort-oliveDeep/95 via-resort-olive/90 to-resort-oliveDeep/95 backdrop-blur-md text-resort-cream border border-resort-gold/50 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-full bg-resort-gold/25 text-resort-gold border border-resort-gold/40">
+            <div className="p-2.5 rounded-full bg-resort-gold/20 text-resort-gold shadow-sm">
               <ShieldCheck className="w-6 h-6" />
             </div>
             <div>
@@ -88,7 +91,7 @@ export default function SwimmingPoolSection({ onOpenPoolBooking }) {
               </p>
             </div>
           </div>
-          <span className="text-xs px-3.5 py-1.5 rounded-full bg-white/10 border border-white/20 uppercase tracking-wider font-semibold text-white">
+          <span className="text-xs px-3.5 py-1.5 rounded-full bg-white/10 border border-white/20 uppercase tracking-wider font-semibold text-white backdrop-blur-sm">
             Daily Access Included
           </span>
         </div>
@@ -99,18 +102,18 @@ export default function SwimmingPoolSection({ onOpenPoolBooking }) {
           {/* Main Visual Gallery (7 cols) */}
           <div className="lg:col-span-7 space-y-4">
             {/* Big Active Image */}
-            <div className="relative h-80 sm:h-[420px] rounded-2xl overflow-hidden shadow-2xl border-4 border-white/90 group">
+            <div className="relative h-80 sm:h-[420px] rounded-2xl overflow-hidden shadow-2xl border-4 border-white group">
               <img
                 src={poolImages[activeImageIndex].url}
                 alt={poolImages[activeImageIndex].caption}
                 className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-transparent" />
               <div className="absolute bottom-4 left-4 right-4 text-white">
                 <span className="text-xs uppercase tracking-widest text-resort-gold block font-semibold drop-shadow">
                   Sadguru Poolside
                 </span>
-                <p className="font-serif italic text-lg drop-shadow">{poolImages[activeImageIndex].caption}</p>
+                <p className="font-serif italic text-lg text-white drop-shadow-md">{poolImages[activeImageIndex].caption}</p>
               </div>
             </div>
 
@@ -121,7 +124,7 @@ export default function SwimmingPoolSection({ onOpenPoolBooking }) {
                   key={idx}
                   onClick={() => setActiveImageIndex(idx)}
                   className={`relative h-20 rounded-xl overflow-hidden border-2 transition-all ${
-                    activeImageIndex === idx ? 'border-resort-gold scale-95 shadow-lg ring-2 ring-resort-gold/50' : 'border-white/30 opacity-75 hover:opacity-100 hover:border-white'
+                    activeImageIndex === idx ? 'border-resort-gold scale-95 shadow-md' : 'border-transparent opacity-80 hover:opacity-100'
                   }`}
                 >
                   <img src={img.url} alt="" className="w-full h-full object-cover" />
@@ -131,7 +134,7 @@ export default function SwimmingPoolSection({ onOpenPoolBooking }) {
           </div>
 
           {/* Pricing, Timings & Separate Pool Booking Box (5 cols) */}
-          <div className="lg:col-span-5 bg-white/95 backdrop-blur-md rounded-3xl p-6 sm:p-8 shadow-2xl border border-resort-beigeDark/80 space-y-6">
+          <div className="lg:col-span-5 bg-white/95 backdrop-blur-md rounded-3xl p-6 sm:p-8 shadow-2xl border border-resort-gold/30 space-y-6">
             <div className="border-b border-resort-beigeDark pb-4">
               <span className="text-[11px] uppercase tracking-widest text-resort-gold font-bold block mb-1">
                 Day Visitors & Pool Passes
@@ -218,7 +221,7 @@ export default function SwimmingPoolSection({ onOpenPoolBooking }) {
           {poolFeatures.map((feat, idx) => {
             const Icon = feat.icon;
             return (
-              <div key={idx} className="bg-white/95 backdrop-blur-md p-5 rounded-2xl border border-white/50 shadow-xl hover:shadow-2xl transition-all">
+              <div key={idx} className="bg-white/95 backdrop-blur-md p-5 rounded-2xl border border-white/50 shadow-xl hover:shadow-2xl hover:border-resort-gold/50 transition-all duration-300">
                 <div className="w-10 h-10 rounded-xl bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 mb-3">
                   <Icon className="w-5 h-5 text-cyan-600" />
                 </div>

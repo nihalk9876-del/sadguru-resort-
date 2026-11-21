@@ -1,0 +1,14 @@
+{
+  "appId": "com.sadgururesort.admin",
+  "appName": "Sadguru Resort",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "plugins": {
+    "Camera": {
+      "permissions": ["camera", "photos"]
+    }
+  }
+}
