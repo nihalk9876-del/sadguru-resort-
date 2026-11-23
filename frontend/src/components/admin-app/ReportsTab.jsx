@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   TrendingUp, DollarSign, Calendar, BedDouble, Waves, 
   CreditCard, Download, Filter, RefreshCw, ArrowUpRight, CheckCircle2,
-  CalendarDays, Heart, Home, Clock, ShieldCheck, History, Database
+  CalendarDays, Heart, Home, Clock, ShieldCheck, History, Database, Search, UserCheck
 } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -11,7 +11,8 @@ export default function ReportsTab() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [reportsData, setReportsData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tableFilter, setTableFilter] = useState('all'); // 'all', 'room', 'pool'
+  const [tableFilter, setTableFilter] = useState('all'); // 'all', 'room', 'pool', 'checked_in', 'checked_out'
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     fetchReports(timeframe, selectedDate);
@@ -57,6 +58,12 @@ export default function ReportsTab() {
   };
 
   const summary = reportsData?.summary || {
+    totalRoomBookingTillDate: 0,
+    todayRoomBookingCount: 0,
+    todayRevenue: 0,
+    monthlyRevenue: 0,
+    tillNowRevenue: 0,
+    timeframeTotalRevenue: 0,
     totalRevenue: 0,
     roomRevenue: 0,
     poolRevenue: 0,
@@ -69,8 +76,19 @@ export default function ReportsTab() {
   };
 
   const filteredTransactions = (reportsData?.recentTransactions || []).filter(t => {
-    if (tableFilter === 'room') return t.type.toLowerCase().includes('room');
-    if (tableFilter === 'pool') return t.type.toLowerCase().includes('pool');
+    if (tableFilter === 'room' && !t.type.toLowerCase().includes('room')) return false;
+    if (tableFilter === 'pool' && !t.type.toLowerCase().includes('pool')) return false;
+    if (tableFilter === 'checked_in' && t.status !== 'Checked-In') return false;
+    if (tableFilter === 'checked_out' && t.status !== 'Checked-Out') return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const matchName = (t.customerName || '').toLowerCase().includes(q);
+      const matchPhone = (t.phone || '').includes(q);
+      const matchRoom = (t.item || '').toLowerCase().includes(q);
+      const matchAadhaar = (t.aadhaarNumber || '').includes(q);
+      const matchPartner = (t.secondGuestName || '').toLowerCase().includes(q);
+      return matchName || matchPhone || matchRoom || matchAadhaar || matchPartner;
+    }
     return true;
   });
 
@@ -155,76 +173,131 @@ export default function ReportsTab() {
         </div>
       </div>
 
-      {/* 4 Summary KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        
-        {/* Total Money Collected */}
-        <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-950/40 via-slate-900 to-slate-900 border border-amber-500/40 shadow-lg space-y-2">
-          <div className="flex items-center justify-between text-slate-400 text-xs font-mono uppercase">
-            <span>Total Collection</span>
-            <DollarSign className="w-4 h-4 text-amber-400" />
+      {/* 5 Primary Operational & Revenue KPI Cards as requested */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {/* 1. Total Room Booking Till Date */}
+        <div className="p-3.5 rounded-2xl bg-gradient-to-br from-indigo-950/60 via-slate-900 to-slate-900 border border-indigo-500/40 shadow-lg space-y-1">
+          <div className="flex items-center justify-between text-indigo-300 text-[11px] font-mono uppercase">
+            <span>Total Bookings Till Date</span>
+            <History className="w-4 h-4 text-indigo-400" />
+          </div>
+          <p className="text-2xl sm:text-3xl font-black text-indigo-300">
+            {summary.totalRoomBookingTillDate || 0}
+          </p>
+          <span className="text-[10px] text-slate-400 block truncate">
+            All-time rooms booked
+          </span>
+        </div>
+
+        {/* 2. Today Room Booking */}
+        <div className="p-3.5 rounded-2xl bg-gradient-to-br from-blue-950/60 via-slate-900 to-slate-900 border border-blue-500/40 shadow-lg space-y-1">
+          <div className="flex items-center justify-between text-blue-300 text-[11px] font-mono uppercase">
+            <span>Today Room Booking</span>
+            <BedDouble className="w-4 h-4 text-blue-400" />
+          </div>
+          <p className="text-2xl sm:text-3xl font-black text-blue-300">
+            {summary.todayRoomBookingCount || 0}
+          </p>
+          <span className="text-[10px] text-slate-400 block truncate">
+            Booked / checked-in today
+          </span>
+        </div>
+
+        {/* 3. Today Revenue */}
+        <div className="p-3.5 rounded-2xl bg-gradient-to-br from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/40 shadow-lg space-y-1">
+          <div className="flex items-center justify-between text-emerald-300 text-[11px] font-mono uppercase">
+            <span>Today Revenue</span>
+            <DollarSign className="w-4 h-4 text-emerald-400" />
+          </div>
+          <p className="text-2xl sm:text-3xl font-black text-emerald-300">
+            ₹{(summary.todayRevenue || 0).toLocaleString()}
+          </p>
+          <span className="text-[10px] text-slate-400 block truncate">
+            Collected today (Rooms + Pool)
+          </span>
+        </div>
+
+        {/* 4. Monthly Revenue */}
+        <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-950/60 via-slate-900 to-slate-900 border border-amber-500/40 shadow-lg space-y-1">
+          <div className="flex items-center justify-between text-amber-300 text-[11px] font-mono uppercase">
+            <span>Monthly Revenue</span>
+            <Calendar className="w-4 h-4 text-amber-400" />
           </div>
           <p className="text-2xl sm:text-3xl font-black text-amber-300">
-            ₹{summary.totalRevenue.toLocaleString()}
+            ₹{(summary.monthlyRevenue || 0).toLocaleString()}
+          </p>
+          <span className="text-[10px] text-slate-400 block truncate">
+            Current month revenue
+          </span>
+        </div>
+
+        {/* 5. Till Now Revenue */}
+        <div className="p-3.5 rounded-2xl bg-gradient-to-br from-purple-950/60 via-slate-900 to-slate-900 border border-purple-500/40 shadow-lg space-y-1 col-span-2 sm:col-span-1">
+          <div className="flex items-center justify-between text-purple-300 text-[11px] font-mono uppercase">
+            <span>Till Now Revenue</span>
+            <TrendingUp className="w-4 h-4 text-purple-400" />
+          </div>
+          <p className="text-2xl sm:text-3xl font-black text-purple-300">
+            ₹{(summary.tillNowRevenue || 0).toLocaleString()}
+          </p>
+          <span className="text-[10px] text-slate-400 block truncate">
+            Grand total all-time revenue
+          </span>
+        </div>
+      </div>
+
+      {/* Selected Timeframe Revenue & Modes Split */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {/* Timeframe Total Collection */}
+        <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+          <div className="flex items-center justify-between text-slate-400 text-xs font-mono uppercase">
+            <span>Period Collection ({timeframe})</span>
+            <DollarSign className="w-4 h-4 text-amber-400" />
+          </div>
+          <p className="text-xl sm:text-2xl font-bold text-amber-300">
+            ₹{(summary.timeframeTotalRevenue || summary.totalRevenue || 0).toLocaleString()}
           </p>
           <span className="text-[11px] text-emerald-400 flex items-center gap-1">
             <CheckCircle2 className="w-3.5 h-3.5" />
-            {summary.totalEntries} Total Bookings & Entries
+            {summary.totalEntries} Total Bookings & Passes
           </span>
         </div>
 
-        {/* Room Revenue */}
-        <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/40 shadow-lg space-y-2">
+        {/* Room vs Pool Split */}
+        <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono uppercase">
-            <span>Rooms Collection</span>
+            <span>Rooms vs Pool Split</span>
             <BedDouble className="w-4 h-4 text-emerald-400" />
           </div>
-          <p className="text-2xl sm:text-3xl font-black text-emerald-400">
-            ₹{summary.roomRevenue.toLocaleString()}
-          </p>
-          <span className="text-[11px] text-slate-300">
-            {summary.roomBookingsCount} Rooms Booked
-          </span>
-        </div>
-
-        {/* Swimming Pool Revenue */}
-        <div className="p-4 rounded-2xl bg-gradient-to-br from-cyan-950/40 via-slate-900 to-slate-900 border border-cyan-500/40 shadow-lg space-y-2">
-          <div className="flex items-center justify-between text-slate-400 text-xs font-mono uppercase">
-            <span>Pool Pass Collection</span>
-            <Waves className="w-4 h-4 text-cyan-400" />
+          <div className="space-y-0.5 text-xs">
+            <div className="flex justify-between">
+              <span className="text-slate-400">Rooms ({summary.roomBookingsCount}):</span>
+              <span className="font-bold text-emerald-400">₹{summary.roomRevenue.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Pool ({summary.poolPassesCount}):</span>
+              <span className="font-bold text-cyan-300">₹{summary.poolRevenue.toLocaleString()}</span>
+            </div>
           </div>
-          <p className="text-2xl sm:text-3xl font-black text-cyan-300">
-            ₹{summary.poolRevenue.toLocaleString()}
-          </p>
-          <span className="text-[11px] text-slate-300">
-            {summary.poolPassesCount} Pool Passes Issued
-          </span>
         </div>
 
         {/* Payment Modes Split */}
-        <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-lg space-y-2">
+        <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono uppercase">
             <span>Cash vs UPI Split</span>
             <CreditCard className="w-4 h-4 text-purple-400" />
           </div>
-          <div className="space-y-1 text-xs">
+          <div className="space-y-0.5 text-xs">
             <div className="flex justify-between">
-              <span className="text-slate-400">Cash Collected:</span>
+              <span className="text-slate-400">Cash:</span>
               <span className="font-bold text-white">₹{summary.cashRevenue.toLocaleString()}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">UPI / QR Online:</span>
+              <span className="text-slate-400">UPI / QR:</span>
               <span className="font-bold text-emerald-400">₹{summary.upiRevenue.toLocaleString()}</span>
             </div>
-            {summary.cardRevenue > 0 && (
-              <div className="flex justify-between">
-                <span className="text-slate-400">Card POS:</span>
-                <span className="font-bold text-cyan-300">₹{summary.cardRevenue.toLocaleString()}</span>
-              </div>
-            )}
           </div>
         </div>
-
       </div>
 
       {/* Date Audit Section: Rooms Booked on Selected Date & For How Much */}
@@ -374,37 +447,72 @@ export default function ReportsTab() {
       {/* Combined Transactions Ledger Table */}
       <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4 shadow-xl">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2">
-            <DollarSign className="w-4 h-4 text-emerald-400" />
-            Live Unified Transaction Ledger ({filteredTransactions.length} records)
-          </h3>
+          <div>
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <DollarSign className="w-4 h-4 text-emerald-400" />
+              Live Unified Guest Ledger & Transactions ({filteredTransactions.length} records)
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Guest names, mobile numbers, Aadhaar details, stay category & payment records (never vanished on check-out)
+            </p>
+          </div>
 
-          {/* Table Filters */}
-          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
-            <button
-              onClick={() => setTableFilter('all')}
-              className={`px-3 py-1 rounded-lg font-medium transition ${
-                tableFilter === 'all' ? 'bg-slate-800 text-white font-bold' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              All
-            </button>
-            <button
-              onClick={() => setTableFilter('room')}
-              className={`px-3 py-1 rounded-lg font-medium transition ${
-                tableFilter === 'room' ? 'bg-emerald-500/20 text-emerald-300 font-bold' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Rooms Only
-            </button>
-            <button
-              onClick={() => setTableFilter('pool')}
-              className={`px-3 py-1 rounded-lg font-medium transition ${
-                tableFilter === 'pool' ? 'bg-cyan-500/20 text-cyan-300 font-bold' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Pool Passes Only
-            </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Search Input */}
+            <div className="relative w-full sm:w-56">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search guest, mobile, room..."
+                className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500"
+              />
+            </div>
+
+            {/* Table Filters */}
+            <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+              <button
+                onClick={() => setTableFilter('all')}
+                className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                  tableFilter === 'all' ? 'bg-slate-800 text-white font-bold' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                All
+              </button>
+              <button
+                onClick={() => setTableFilter('room')}
+                className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                  tableFilter === 'room' ? 'bg-emerald-500/20 text-emerald-300 font-bold' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Rooms
+              </button>
+              <button
+                onClick={() => setTableFilter('checked_in')}
+                className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                  tableFilter === 'checked_in' ? 'bg-amber-500/20 text-amber-300 font-bold' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Checked-In
+              </button>
+              <button
+                onClick={() => setTableFilter('checked_out')}
+                className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                  tableFilter === 'checked_out' ? 'bg-purple-500/20 text-purple-300 font-bold' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Checked-Out
+              </button>
+              <button
+                onClick={() => setTableFilter('pool')}
+                className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                  tableFilter === 'pool' ? 'bg-cyan-500/20 text-cyan-300 font-bold' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Pool
+              </button>
+            </div>
           </div>
         </div>
 
@@ -414,26 +522,26 @@ export default function ReportsTab() {
             <thead className="bg-slate-950/90 text-slate-400 uppercase font-mono text-[10px] border-b border-slate-800">
               <tr>
                 <th className="p-3">Ref ID</th>
-                <th className="p-3">Type / Category</th>
-                <th className="p-3">Guest Name & Phone</th>
-                <th className="p-3">Aadhaar (if room)</th>
-                <th className="p-3">Amount</th>
+                <th className="p-3">Room / Item</th>
+                <th className="p-3">Guest & Contact Phone</th>
+                <th className="p-3">Stay & Aadhaar Details</th>
+                <th className="p-3">Amount Settled</th>
                 <th className="p-3">Payment</th>
-                <th className="p-3">Date</th>
+                <th className="p-3">Dates & Timings</th>
                 <th className="p-3">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80 bg-slate-900/40">
               {filteredTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-6 text-center text-slate-500">
-                    No transactions recorded for this timeframe.
+                  <td colSpan={8} className="p-8 text-center text-slate-500">
+                    No matching records found.
                   </td>
                 </tr>
               ) : (
                 filteredTransactions.map((tx, idx) => (
                   <tr key={idx} className="hover:bg-slate-800/50 transition">
-                    <td className="p-3 font-mono font-semibold text-white whitespace-nowrap">
+                    <td className="p-3 font-mono font-semibold text-amber-300 whitespace-nowrap">
                       {tx.id}
                     </td>
                     <td className="p-3">
@@ -446,25 +554,75 @@ export default function ReportsTab() {
                       </span>
                     </td>
                     <td className="p-3">
-                      <p className="font-semibold text-white">{tx.customerName}</p>
-                      <p className="text-[11px] text-slate-400 font-mono">{tx.phone}</p>
-                    </td>
-                    <td className="p-3 font-mono text-amber-300">
-                      {tx.aadhaarNumber || '-'}
-                    </td>
-                    <td className="p-3 font-bold text-white whitespace-nowrap">
-                      ₹{tx.amount?.toLocaleString()}
+                      <p className="font-bold text-white text-sm">{tx.customerName}</p>
+                      <p className="text-[11px] text-amber-400 font-mono font-semibold flex items-center gap-1 mt-0.5">
+                        📞 {tx.phone || 'No phone'}
+                      </p>
                     </td>
                     <td className="p-3">
-                      <span className="text-[11px] text-slate-300">
-                        {tx.paymentMethod}
-                      </span>
+                      <div className="flex items-center gap-1 mb-1">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          tx.stayType === 'Couple'
+                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                            : tx.stayType === 'Pool'
+                            ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                            : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        }`}>
+                          {tx.stayType || 'Family'}
+                        </span>
+                      </div>
+                      {tx.aadhaarNumber && (
+                        <p className="text-[11px] text-slate-300 font-mono">
+                          ID: <span className="text-slate-200">{tx.aadhaarNumber}</span>
+                        </p>
+                      )}
+                      {tx.secondGuestName && (
+                        <div className="mt-1 pt-1 border-t border-slate-800 text-[10px] text-rose-300">
+                          <p className="font-semibold">Partner: {tx.secondGuestName} {tx.secondGuestAge ? `(${tx.secondGuestAge}y)` : ''}</p>
+                          {tx.secondGuestAadhaar && (
+                            <p className="font-mono text-slate-400">{tx.secondGuestAadhaar}</p>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-3 whitespace-nowrap">
+                      <p className="font-bold text-white font-mono text-sm">
+                        ₹{(tx.amount || 0).toLocaleString()}
+                      </p>
+                      {tx.remainingBalance > 0 ? (
+                        <span className="text-[10px] text-red-400 font-semibold block">
+                          Due: ₹{tx.remainingBalance.toLocaleString()}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-emerald-400 font-semibold block">
+                          Fully Paid
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-3 whitespace-nowrap">
+                      <span className="text-slate-300 block font-medium">{tx.paymentMethod || 'Cash'}</span>
+                      <span className="text-[10px] text-slate-400">{tx.paymentStatus || 'Paid'}</span>
                     </td>
                     <td className="p-3 text-[11px] text-slate-400 whitespace-nowrap">
-                      {tx.timestamp ? tx.timestamp.split('T')[0] : '-'}
+                      {tx.checkIn && <div>In: <span className="text-slate-200">{tx.checkIn}</span> {tx.checkInTime ? `(${tx.checkInTime})` : ''}</div>}
+                      {tx.actualCheckOut ? (
+                        <div className="text-purple-300 font-medium">Out: {tx.actualCheckOut} ({tx.actualCheckOutTime || 'Early'})</div>
+                      ) : tx.checkOut ? (
+                        <div>Exp Out: {tx.checkOut}</div>
+                      ) : (
+                        <div>{tx.timestamp ? tx.timestamp.split('T')[0] : '-'}</div>
+                      )}
                     </td>
-                    <td className="p-3">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-400">
+                    <td className="p-3 whitespace-nowrap">
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                        tx.status === 'Checked-Out'
+                          ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                          : tx.status === 'Checked-In'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 animate-pulse'
+                          : tx.status === 'Completed'
+                          ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                          : 'bg-slate-700/50 text-slate-300'
+                      }`}>
                         {tx.status}
                       </span>
                     </td>

@@ -418,7 +418,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
     // 2. EXTRACT DATE OF BIRTH (DOB)
     const dobRegex = /(?:DOB|Date\s*of\s*Birth|जन्म\s*तारीख|जन्म\s*वर्ष|Year\s*of\s*Birth)[:\s]*([0-9]{2}[\/\-\.][0-9]{2}[\/\-\.][0-9]{4}|[0-9]{4})/i;
     const dobMatch = text.match(dobRegex);
-    
+
     if (dobMatch) {
       dob = dobMatch[1].replace(/[\-\.]/g, '/');
     } else {
@@ -447,7 +447,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
     let dobLineIndex = -1;
     for (let i = 0; i < lines.length; i++) {
       if (/(?:DOB|Date\s*of\s*Birth|जन्म\s*तारीख|जन्म\s*वर्ष|Year\s*of\s*Birth)/i.test(lines[i]) ||
-          /\b(0[1-9]|[12][0-9]|3[01])[\/\-\.](0[1-9]|1[012])[\/\-\.](19\d\d|20\d\d)\b/.test(lines[i])) {
+        /\b(0[1-9]|[12][0-9]|3[01])[\/\-\.](0[1-9]|1[012])[\/\-\.](19\d\d|20\d\d)\b/.test(lines[i])) {
         dobLineIndex = i;
         break;
       }
@@ -464,17 +464,18 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
     }
 
     const marathiExclude = [
-      'भारत', 'सरकार', 'विशिष्ट', 'ओळख', 'प्राधिकरण', 'माझे', 'माझी', 
-      'आधार', 'जन्म', 'तारीख', 'वर्ष', 'पुरुष', 'महिला', 'पत्ता', 'नोंदणी', 
+      'भारत', 'सरकार', 'विशिष्ट', 'ओळख', 'प्राधिकरण', 'माझे', 'माझी',
+      'आधार', 'जन्म', 'तारीख', 'वर्ष', 'पुरुष', 'महिला', 'पत्ता', 'नोंदणी',
       'दिनांक', 'मदत', 'हेल्पलाइन', 'शासन', 'महाराष्ट्र', 'नाव'
     ];
 
     const englishExclude = [
-      'GOVERNMENT', 'INDIA', 'UNIQUE', 'IDENTIFICATION', 'AUTHORITY', 
-      'ENROLMENT', 'ENROLLMENT', 'DOB', 'DATE', 'BIRTH', 'YEAR', 'MALE', 
-      'FEMALE', 'TRANSGENDER', 'HELP', 'UIDAI', 'WWW', 'AADHAAR', 'AAD', 'DAA', 'VID', 
-      'FATHER', 'HUSBAND', 'ADDRESS', 'MERI', 'MERA', 'PEHCHAN', 'PO', 
-      'INCOME', 'TAX', 'DEPARTMENT', 'STATE', 'DIST', 'CARD', 'SIGNATURE', 'NUMBER', 'NO'
+      'GOVERNMENT', 'INDIA', 'GOVT', 'STATE', 'UNIQUE', 'IDENTIFICATION', 'AUTHORITY',
+      'ENROLMENT', 'ENROLLMENT', 'DOB', 'DATE', 'BIRTH', 'YEAR', 'MALE',
+      'FEMALE', 'TRANSGENDER', 'HELP', 'HELPLINE', 'UIDAI', 'WWW', 'AADHAAR', 'AAD', 'DAA', 'VID',
+      'FATHER', 'HUSBAND', 'WIFE', 'SON', 'DAUGHTER', 'ADDRESS', 'MERI', 'MERA', 'PEHCHAN', 'PO',
+      'PIN', 'CODE', 'INCOME', 'TAX', 'DEPARTMENT', 'STATE', 'DIST', 'DISTRICT', 'CARD', 
+      'SIGNATURE', 'NUMBER', 'NO', 'PRINT', 'VALID', 'REPUBLIC', 'BHARAT', 'SARKAR', 'AITEHI', 'HITA', 'ZA'
     ];
 
     // Helper: Clean Marathi text candidate
@@ -499,6 +500,36 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
         .replace(/\s+/g, ' ')
         .trim();
       return clean;
+    };
+
+    // Helper: Verify if candidate is a genuine human name (not OCR noise like "NT re" or card labels)
+    const isValidHumanName = (cleaned) => {
+      if (!cleaned || cleaned.length < 5) return false;
+      const words = cleaned.split(/\s+/).filter(w => w.length > 0);
+      if (words.length < 2 || words.length > 5) return false;
+
+      // Every word must be letters or dot (initial)
+      const allAlpha = words.every(w => /^[a-zA-Z\.]+$/.test(w));
+      if (!allAlpha) return false;
+
+      // Disqualify if contains card header/footer keywords
+      const hasExcluded = words.some(w => englishExclude.includes(w.toUpperCase()));
+      if (hasExcluded) return false;
+
+      // Disqualify strings where words are only 2 letters (like "NT re" or "in to")
+      const longWords = words.filter(w => w.length >= 3);
+      if (longWords.length < 2 && !(words.length === 2 && words[0].length <= 2 && words[1].length >= 4)) {
+        return false;
+      }
+
+      // Check for vowel pattern (reject random consonant sequences)
+      const isGibberish = words.some(w => {
+        const vowelCount = (w.match(/[aeiouyAEIOUY]/g) || []).length;
+        return vowelCount === 0 && w.length > 2;
+      });
+      if (isGibberish) return false;
+
+      return true;
     };
 
     // Build candidate indices: priority search backwards directly from the line above DOB
@@ -552,13 +583,9 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
     for (const idx of candidateIndices) {
       const raw = lines[idx];
       const cleaned = cleanEnglishCandidate(raw);
-      const words = cleaned.split(/\s+/).filter(w => w.length > 1);
-      if (words.length >= 2 && words.length <= 4) {
-        const hasKeyword = words.some(w => englishExclude.includes(w.toUpperCase()));
-        if (!hasKeyword && cleaned.length >= 4) {
-          englishName = cleaned;
-          break;
-        }
+      if (isValidHumanName(cleaned)) {
+        englishName = cleaned;
+        break;
       }
     }
 
@@ -568,13 +595,9 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
         if (dobLineIndex !== -1 && i >= dobLineIndex) continue;
         const raw = lines[i];
         const cleaned = cleanEnglishCandidate(raw);
-        const words = cleaned.split(/\s+/).filter(w => w.length > 1);
-        if (words.length >= 2 && words.length <= 4) {
-          const hasKeyword = words.some(w => englishExclude.includes(w.toUpperCase()));
-          if (!hasKeyword && cleaned.length >= 4) {
-            englishName = cleaned;
-            break;
-          }
+        if (isValidHumanName(cleaned)) {
+          englishName = cleaned;
+          break;
         }
       }
     }
@@ -628,7 +651,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
       <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-md shadow-2xl text-slate-800 overflow-hidden flex flex-col max-h-[92vh]">
-        
+
         {/* Header */}
         <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
           <div className="flex items-center gap-2.5">
@@ -654,17 +677,15 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
         <div className="grid grid-cols-2 p-1.5 bg-slate-50 border-b border-slate-100 text-xs">
           <button
             onClick={() => { setActiveMode('camera'); setScanError(''); }}
-            className={`py-1.5 rounded-lg font-semibold transition ${
-              activeMode === 'camera' ? 'bg-white shadow-2xs text-slate-900' : 'text-slate-500 hover:text-slate-900'
-            }`}
+            className={`py-1.5 rounded-lg font-semibold transition ${activeMode === 'camera' ? 'bg-white shadow-2xs text-slate-900' : 'text-slate-500 hover:text-slate-900'
+              }`}
           >
             Live Camera
           </button>
           <button
             onClick={() => { setActiveMode('upload'); stopCamera(); setScanError(''); }}
-            className={`py-1.5 rounded-lg font-semibold transition ${
-              activeMode === 'upload' ? 'bg-white shadow-2xs text-slate-900' : 'text-slate-500 hover:text-slate-900'
-            }`}
+            className={`py-1.5 rounded-lg font-semibold transition ${activeMode === 'upload' ? 'bg-white shadow-2xs text-slate-900' : 'text-slate-500 hover:text-slate-900'
+              }`}
           >
             Take Photo / Upload
           </button>
@@ -686,7 +707,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
 
         {/* Content Body */}
         <div className="p-4 overflow-y-auto space-y-3.5 flex-1">
-          
+
           {/* Mode 1: Live Camera Viewfinder */}
           {activeMode === 'camera' && (
             <div className="space-y-3">
@@ -744,9 +765,8 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
               />
               <div
                 onClick={() => consentGiven && fileInputRef.current?.click()}
-                className={`border-2 border-dashed border-slate-200 hover:border-amber-400 rounded-xl p-6 text-center cursor-pointer bg-slate-50/60 hover:bg-slate-50 transition space-y-2.5 ${
-                  !consentGiven ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
+                className={`border-2 border-dashed border-slate-200 hover:border-amber-400 rounded-xl p-6 text-center cursor-pointer bg-slate-50/60 hover:bg-slate-50 transition space-y-2.5 ${!consentGiven ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
               >
                 <div className="w-10 h-10 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200">
                   <Upload className="w-5 h-5" />

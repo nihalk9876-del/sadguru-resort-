@@ -925,11 +925,14 @@ const db = {
         return todayStr >= checkInDate && todayStr <= checkOutDate;
       });
 
-      // Find upcoming booking for today or tomorrow
+      // Find upcoming unfulfilled future reservation for this room
       const upcomingBooking = allBookings.find(b => {
         if (String(b.roomId) !== String(room.id) && String(b.roomNumber) !== String(room.roomNumber)) return false;
-        if (b.status === BOOKING_STATUS.CANCELLED || b.status === 'Completed') return false;
+        // Strictly exclude Cancelled, Completed, and Checked-Out bookings
+        if (b.status === BOOKING_STATUS.CANCELLED || b.status === 'Completed' || b.status === 'Checked-Out') return false;
         if (activeBooking && b.id === activeBooking.id) return false;
+        // Only Confirmed / Pending / Reserved future bookings
+        if (b.status !== BOOKING_STATUS.CONFIRMED && b.status !== 'Pending' && b.status !== 'Reserved') return false;
         const checkInDate = normalizeDateStr(b.checkIn);
         return checkInDate >= todayStr;
       });
@@ -943,7 +946,7 @@ const db = {
       } else if (activeBooking) {
         if (activeBooking.status === 'Checked-In') {
           calculatedStatus = ROOM_STATUS.OCCUPIED;
-        } else if (activeBooking.status === BOOKING_STATUS.CONFIRMED) {
+        } else if (activeBooking.status === BOOKING_STATUS.CONFIRMED || activeBooking.status === 'Reserved') {
           calculatedStatus = ROOM_STATUS.RESERVED;
         } else {
           calculatedStatus = ROOM_STATUS.OCCUPIED;
@@ -1131,53 +1134,63 @@ const db = {
   earlyCheckoutRoomBooking: async (roomNumberOrId, actualCheckOutTime) => {
     return updateDb((data) => {
       const now = new Date();
+      const todayStr = now.toISOString().split('T')[0];
 
-      // Find active booking for this room
-      const booking = (data.bookings || []).find(b => {
+      const targetRoom = data.rooms.find(r => String(r.roomNumber) === String(roomNumberOrId) || String(r.id) === String(roomNumberOrId));
+
+      // Find all active/pending/in-house bookings for this room and mark them Checked-Out
+      const activeBookings = (data.bookings || []).filter(b => {
         const matchesRoom = String(b.roomNumber) === String(roomNumberOrId) || String(b.roomId) === String(roomNumberOrId) || String(b.id) === String(roomNumberOrId);
         if (!matchesRoom) return false;
-        return b.status === 'Checked-In' || b.status === BOOKING_STATUS.CONFIRMED;
+        return ['Checked-In', 'Confirmed', 'Reserved', 'Occupied', 'Pending'].includes(b.status);
       });
 
-      if (!booking) {
-        throw new Error(`No active checked-in booking found for Room ${roomNumberOrId}.`);
+      let lastCheckedOutBooking = null;
+
+      activeBookings.forEach(booking => {
+        const scheduledCheckOut = booking.checkOut;
+        const scheduledCheckOutTime = booking.checkOutTime;
+
+        booking.status = 'Checked-Out';
+        booking.actualCheckOut = todayStr;
+        booking.actualCheckOutTime = actualCheckOutTime || now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        booking.originalExpectedCheckOut = `${scheduledCheckOut} ${scheduledCheckOutTime || '11:00 AM'}`;
+        booking.isEarlyCheckout = true;
+        booking.updatedAt = now.toISOString();
+
+        // Ensure all checkout revenue is fully credited & settled
+        if (booking.remainingBalance > 0) {
+          booking.advancePaid = (Number(booking.advancePaid) || 0) + Number(booking.remainingBalance);
+          if (!booking.payments) booking.payments = [];
+          booking.payments.push({
+            id: `PAY-CO-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            amount: Number(booking.remainingBalance),
+            method: booking.paymentMethod || 'Cash',
+            date: now.toISOString(),
+            notes: 'Settled at Check-Out'
+          });
+          booking.remainingBalance = 0;
+          booking.paymentStatus = 'Paid';
+        }
+        syncToMongo('Booking', { id: booking.id }, booking);
+        lastCheckedOutBooking = booking;
+      });
+
+      if (!targetRoom && activeBookings.length === 0) {
+        throw new Error(`Room ${roomNumberOrId} not found.`);
       }
 
-      const scheduledCheckOut = booking.checkOut;
-      const scheduledCheckOutTime = booking.checkOutTime;
-
-      booking.status = 'Checked-Out';
-      booking.actualCheckOut = now.toISOString().split('T')[0];
-      booking.actualCheckOutTime = actualCheckOutTime || now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-      booking.originalExpectedCheckOut = `${scheduledCheckOut} ${scheduledCheckOutTime || '11:00 AM'}`;
-      booking.isEarlyCheckout = true;
-      booking.updatedAt = now.toISOString();
-
-      // Ensure all checkout revenue is fully credited & settled
-      if (booking.remainingBalance > 0) {
-        booking.advancePaid = (Number(booking.advancePaid) || 0) + Number(booking.remainingBalance);
-        if (!booking.payments) booking.payments = [];
-        booking.payments.push({
-          id: `PAY-CO-${Date.now()}`,
-          amount: Number(booking.remainingBalance),
-          method: booking.paymentMethod || 'Cash',
-          date: now.toISOString(),
-          notes: 'Settled at Check-Out'
-        });
-        booking.remainingBalance = 0;
-        booking.paymentStatus = 'Paid';
-      }
-
-      // Immediately transition room status to CLEANING
-      const targetRoom = data.rooms.find(r => String(r.roomNumber) === String(booking.roomNumber) || String(r.id) === String(booking.roomId));
+      // Transition room status to CLEANING
       if (targetRoom) {
         targetRoom.status = ROOM_STATUS.CLEANING;
         targetRoom.updatedAt = now.toISOString();
         syncToMongo('Room', { roomNumber: targetRoom.roomNumber }, targetRoom);
       }
 
-      syncToMongo('Booking', { id: booking.id }, booking);
-      return { booking, room: targetRoom };
+      return { 
+        booking: lastCheckedOutBooking || { roomNumber: roomNumberOrId, status: 'Checked-Out', customerName: 'Guest' }, 
+        room: targetRoom 
+      };
     });
   },
 
@@ -1423,8 +1436,105 @@ const db = {
 
     const now = new Date();
     const todayStr = now.toISOString().split('T')[0];
+    const currentMonthKey = todayStr.substring(0, 7); // e.g. '2026-11'
 
-    // Determine cutoff date based on timeframe
+    // Exclude cancelled bookings for calculations
+    const validAllBookings = allBookings.filter(b => b.status !== BOOKING_STATUS.CANCELLED);
+    const validPoolBookings = poolBookings.filter(p => p.status !== BOOKING_STATUS.CANCELLED);
+
+    // =============================================================
+    // 5 PRIMARY AUDIT METRICS REQUESTED BY MANAGEMENT
+    // =============================================================
+
+    // 1. Total Room Booking Till Date (Grand all-time lifetime count)
+    const totalRoomBookingTillDate = (archive.historicalRoomBookingsCount || 0) + validAllBookings.length;
+
+    // 2. Today Room Booking Count (Created or checked-in today)
+    const todayRoomBookingCount = validAllBookings.filter(b => {
+      const createdDate = (b.createdAt || '').split('T')[0];
+      const checkInDate = (b.checkIn || '').split('T')[0];
+      return createdDate === todayStr || checkInDate === todayStr;
+    }).length;
+
+    // Helper: Calculate revenue settled for a single booking
+    const getBookingSettledRevenue = (b) => {
+      if (b.payments && b.payments.length > 0) {
+        return b.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      }
+      if (b.status === 'Checked-Out' || b.status === 'Completed') {
+        return Number(b.totalAmount || b.advancePaid || 0);
+      }
+      return Number(b.advancePaid !== undefined && b.advancePaid !== '' ? b.advancePaid : b.totalAmount) || 0;
+    };
+
+    // 3. Today Revenue (Room payments/checkouts today + today pool passes)
+    let todayRoomRevenue = 0;
+    validAllBookings.forEach(b => {
+      if (b.payments && b.payments.length > 0) {
+        b.payments.forEach(p => {
+          if ((p.date || '').split('T')[0] === todayStr) {
+            todayRoomRevenue += Number(p.amount) || 0;
+          }
+        });
+      } else {
+        const bDate = (b.actualCheckOut || b.createdAt || b.checkIn || '').split('T')[0];
+        if (bDate === todayStr) {
+          todayRoomRevenue += getBookingSettledRevenue(b);
+        }
+      }
+    });
+
+    let todayPoolRevenue = 0;
+    validPoolBookings.forEach(p => {
+      const pDate = (p.date || p.createdAt || '').split('T')[0];
+      if (pDate === todayStr) {
+        todayPoolRevenue += Number(p.totalAmount || 0);
+      }
+    });
+    const todayRevenue = todayRoomRevenue + todayPoolRevenue;
+
+    // 4. Monthly Revenue (Current calendar month: YYYY-MM)
+    let monthlyRoomRevenue = Number(archive.monthlySummary?.[currentMonthKey]?.roomRevenue || 0);
+    validAllBookings.forEach(b => {
+      if (b.payments && b.payments.length > 0) {
+        b.payments.forEach(p => {
+          if ((p.date || '').substring(0, 7) === currentMonthKey) {
+            monthlyRoomRevenue += Number(p.amount) || 0;
+          }
+        });
+      } else {
+        const bDate = (b.actualCheckOut || b.createdAt || b.checkIn || '').split('T')[0];
+        if (bDate.substring(0, 7) === currentMonthKey) {
+          monthlyRoomRevenue += getBookingSettledRevenue(b);
+        }
+      }
+    });
+
+    let monthlyPoolRevenue = Number(archive.monthlySummary?.[currentMonthKey]?.poolRevenue || 0);
+    validPoolBookings.forEach(p => {
+      const pDate = (p.date || p.createdAt || '').split('T')[0];
+      if (pDate.substring(0, 7) === currentMonthKey) {
+        monthlyPoolRevenue += Number(p.totalAmount || 0);
+      }
+    });
+    const monthlyRevenue = monthlyRoomRevenue + monthlyPoolRevenue;
+
+    // 5. Till Now Revenue (Grand all-time lifetime revenue collected till date - NEVER RESETS)
+    let allTimeRoomRevenue = 0;
+    validAllBookings.forEach(b => {
+      allTimeRoomRevenue += getBookingSettledRevenue(b);
+    });
+
+    let allTimePoolRevenue = 0;
+    validPoolBookings.forEach(p => {
+      allTimePoolRevenue += Number(p.totalAmount || 0);
+    });
+
+    const tillNowRevenue = (archive.historicalTotalRevenue || 0) + allTimeRoomRevenue + allTimePoolRevenue;
+
+    // =============================================================
+    // TIMEFRAME-SPECIFIC FILTERING (For Charts & Breakdowns)
+    // =============================================================
     let daysToLookBack = 30;
     if (timeframe === 'today') daysToLookBack = 1;
     else if (timeframe === 'week') daysToLookBack = 7;
@@ -1435,36 +1545,28 @@ const db = {
     cutoffDate.setDate(cutoffDate.getDate() - (daysToLookBack - 1));
     const cutoffStr = cutoffDate.toISOString().split('T')[0];
 
-    // Filter relevant room bookings for timeframe
-    const filteredRoomBookings = allBookings.filter(b => {
-      const bDate = (b.checkOut || b.createdAt || b.checkIn || '').split('T')[0];
-      return bDate >= cutoffStr && b.status !== BOOKING_STATUS.CANCELLED;
+    // Filter room bookings whose checkIn, createdAt, or actualCheckOut falls within the timeframe
+    const filteredRoomBookings = validAllBookings.filter(b => {
+      const createdDate = (b.createdAt || '').split('T')[0];
+      const checkInDate = (b.checkIn || '').split('T')[0];
+      const checkoutDate = (b.actualCheckOut || b.checkOut || '').split('T')[0];
+      return createdDate >= cutoffStr || checkInDate >= cutoffStr || checkoutDate >= cutoffStr;
     });
 
-    // Filter relevant pool passes
-    const filteredPoolBookings = poolBookings.filter(p => {
+    const filteredPoolBookings = validPoolBookings.filter(p => {
       const pDate = (p.createdAt || p.date || '').split('T')[0];
-      return pDate >= cutoffStr && p.status !== BOOKING_STATUS.CANCELLED;
+      return pDate >= cutoffStr;
     });
 
-    // Revenue calculations (including checked-out settled amounts & payments)
-    let roomRevenue = 0;
-    let poolRevenue = 0;
+    let timeframeRoomRevenue = 0;
+    let timeframePoolRevenue = 0;
     let cashRevenue = 0;
     let upiRevenue = 0;
     let cardRevenue = 0;
 
     filteredRoomBookings.forEach(b => {
-      let rev = 0;
-      if (b.payments && b.payments.length > 0) {
-        rev = b.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-      } else if (b.status === 'Checked-Out' || b.status === 'Completed') {
-        rev = Number(b.totalAmount || b.advancePaid || 0);
-      } else {
-        rev = Number(b.advancePaid !== undefined && b.advancePaid !== '' ? b.advancePaid : b.totalAmount) || 0;
-      }
-
-      roomRevenue += rev;
+      const rev = getBookingSettledRevenue(b);
+      timeframeRoomRevenue += rev;
       const method = (b.paymentMethod || 'Cash').toLowerCase();
       if (method.includes('upi') || method.includes('gpay') || method.includes('phonepe')) upiRevenue += rev;
       else if (method.includes('card')) cardRevenue += rev;
@@ -1473,17 +1575,17 @@ const db = {
 
     filteredPoolBookings.forEach(p => {
       const rev = Number(p.totalAmount) || 0;
-      poolRevenue += rev;
+      timeframePoolRevenue += rev;
       const method = (p.paymentMethod || 'Cash').toLowerCase();
       if (method.includes('upi') || method.includes('gpay') || method.includes('phonepe')) upiRevenue += rev;
       else if (method.includes('card')) cardRevenue += rev;
       else cashRevenue += rev;
     });
 
-    const totalRevenue = roomRevenue + poolRevenue;
+    const timeframeTotalRevenue = timeframeRoomRevenue + timeframePoolRevenue;
     const totalEntries = filteredRoomBookings.length + filteredPoolBookings.length;
 
-    // Daily breakdown for visual graphs / tables
+    // Daily breakdown for visual graphs / trends
     const dailyBreakdown = [];
     for (let i = daysToLookBack - 1; i >= 0; i--) {
       const d = new Date();
@@ -1497,9 +1599,11 @@ const db = {
       let dayRoomsBooked = 0;
 
       filteredRoomBookings.forEach(b => {
-        const bDate = (b.checkOut || b.createdAt || b.checkIn || '').split('T')[0];
-        if (bDate === dStr) {
-          const rev = Number(b.advancePaid !== undefined ? b.advancePaid : b.totalAmount) || 0;
+        const inDate = (b.checkIn || '').split('T')[0];
+        const createDate = (b.createdAt || '').split('T')[0];
+        const outDate = (b.actualCheckOut || b.checkOut || '').split('T')[0];
+        if (createDate === dStr || inDate === dStr || outDate === dStr) {
+          const rev = getBookingSettledRevenue(b);
           dayRoomRev += rev;
           dayEntries++;
           dayRoomsBooked++;
@@ -1526,24 +1630,24 @@ const db = {
     }
 
     // Specific Date Query: On which date how many rooms booked and for how much
-    let dateReport = null;
     const activeDateFilter = targetDate || todayStr;
-    const dateRoomBookings = allBookings.filter(b => {
-      if (b.status === BOOKING_STATUS.CANCELLED) return false;
+    const dateRoomBookings = validAllBookings.filter(b => {
       const inDate = (b.checkIn || '').split('T')[0];
-      const outDate = (b.checkOut || b.actualCheckOut || inDate).split('T')[0];
+      const outDate = (b.actualCheckOut || b.checkOut || inDate).split('T')[0];
       const createDate = (b.createdAt || '').split('T')[0];
-      return (activeDateFilter >= inDate && activeDateFilter <= outDate) || createDate === activeDateFilter;
+      return (activeDateFilter >= inDate && activeDateFilter <= outDate) || 
+             createDate === activeDateFilter || 
+             (b.actualCheckOut && b.actualCheckOut === activeDateFilter);
     });
 
-    const datePoolBookings = poolBookings.filter(p => {
+    const datePoolBookings = validPoolBookings.filter(p => {
       const pDate = (p.date || p.createdAt || '').split('T')[0];
       return pDate === activeDateFilter;
     });
 
     let dateRoomRevTotal = 0;
     const roomsListForDate = dateRoomBookings.map(b => {
-      const rev = Number(b.totalAmount || b.advancePaid || 0);
+      const rev = getBookingSettledRevenue(b);
       dateRoomRevTotal += rev;
       return {
         id: b.id,
@@ -1552,6 +1656,7 @@ const db = {
         category: b.category,
         customerName: b.customerName,
         phone: b.phone,
+        aadhaarNumber: b.aadhaarNumber || null,
         stayType: b.stayType || 'Family',
         secondGuestName: b.secondGuestName || null,
         secondGuestAge: b.secondGuestAge || null,
@@ -1564,6 +1669,8 @@ const db = {
         checkInTime: b.checkInTime || '12:00 PM',
         checkOut: b.checkOut,
         checkOutTime: b.checkOutTime || '11:00 AM',
+        actualCheckOut: b.actualCheckOut || null,
+        actualCheckOutTime: b.actualCheckOutTime || null,
         paymentStatus: b.paymentStatus || 'Paid',
         paymentMethod: b.paymentMethod || 'Cash',
         status: b.status
@@ -1573,7 +1680,7 @@ const db = {
     let datePoolRevTotal = 0;
     datePoolBookings.forEach(p => { datePoolRevTotal += Number(p.totalAmount || 0); });
 
-    dateReport = {
+    const dateReport = {
       date: activeDateFilter,
       roomsBookedCount: roomsListForDate.length,
       roomRevenue: dateRoomRevTotal,
@@ -1583,11 +1690,10 @@ const db = {
       roomsBooked: roomsListForDate
     };
 
-    // Monthly Revenue History (retains monthly history even after 2-month recycling)
+    // Monthly Revenue History (Retains monthly history even after 2-month recycling)
     const monthlyMap = { ...archive.monthlySummary };
-    allBookings.forEach(b => {
-      if (b.status === BOOKING_STATUS.CANCELLED) return;
-      const bDate = (b.checkOut || b.createdAt || b.checkIn || '').split('T')[0];
+    validAllBookings.forEach(b => {
+      const bDate = (b.actualCheckOut || b.createdAt || b.checkIn || '').split('T')[0];
       const monthKey = bDate.substring(0, 7);
       if (!monthlyMap[monthKey]) {
         monthlyMap[monthKey] = {
@@ -1599,13 +1705,13 @@ const db = {
           poolPassesCount: 0
         };
       }
-      const rev = Number(b.advancePaid !== undefined ? b.advancePaid : b.totalAmount) || 0;
+      const rev = getBookingSettledRevenue(b);
       monthlyMap[monthKey].roomRevenue += rev;
       monthlyMap[monthKey].totalRevenue += rev;
       monthlyMap[monthKey].roomBookingsCount += 1;
     });
 
-    poolBookings.forEach(p => {
+    validPoolBookings.forEach(p => {
       const pDate = (p.date || p.createdAt || '').split('T')[0];
       const monthKey = pDate.substring(0, 7);
       if (!monthlyMap[monthKey]) {
@@ -1636,9 +1742,9 @@ const db = {
         };
       });
 
-    // Combined recent transactions
+    // Complete Unified Transactions Ledger (Includes Checked-In & Checked-Out - Never vanished)
     const combinedTransactions = [
-      ...filteredRoomBookings.map(b => ({
+      ...validAllBookings.map(b => ({
         id: b.id,
         type: 'Room Booking',
         item: `Room ${b.roomNumber} (${b.category || 'Deluxe'})`,
@@ -1646,15 +1752,26 @@ const db = {
         phone: b.phone,
         stayType: b.stayType || 'Family',
         secondGuestName: b.secondGuestName || null,
+        secondGuestAge: b.secondGuestAge || null,
+        secondGuestAadhaar: b.secondGuestAadhaar || null,
         aadhaarNumber: b.aadhaarNumber || null,
-        amount: Number(b.totalAmount || b.nightlyRate),
+        amount: getBookingSettledRevenue(b),
+        totalAmount: b.totalAmount,
+        advancePaid: b.advancePaid,
+        remainingBalance: b.remainingBalance || 0,
         paymentMethod: b.paymentMethod || 'Cash',
         paymentStatus: b.paymentStatus || 'Paid',
-        timestamp: b.checkOut || b.createdAt || b.checkIn,
+        checkIn: b.checkIn,
+        checkInTime: b.checkInTime || '12:00 PM',
+        checkOut: b.checkOut,
+        checkOutTime: b.checkOutTime || '11:00 AM',
+        actualCheckOut: b.actualCheckOut || null,
+        actualCheckOutTime: b.actualCheckOutTime || null,
+        timestamp: b.actualCheckOut || b.createdAt || b.checkIn,
         status: b.status,
-        source: b.bookingSource || 'online'
+        source: b.bookingSource || 'on_spot'
       })),
-      ...filteredPoolBookings.map(p => ({
+      ...validPoolBookings.map(p => ({
         id: p.id,
         type: 'Swimming Pool',
         item: `Pool Pass (${p.totalVisitors || p.adultCount} Guests, ${p.durationHours || 2}h)`,
@@ -1662,38 +1779,53 @@ const db = {
         phone: p.phone,
         stayType: 'Pool',
         secondGuestName: null,
+        secondGuestAge: null,
+        secondGuestAadhaar: null,
         aadhaarNumber: null,
         amount: Number(p.totalAmount),
+        totalAmount: Number(p.totalAmount),
+        advancePaid: Number(p.totalAmount),
+        remainingBalance: 0,
         paymentMethod: p.paymentMethod || 'Cash',
         paymentStatus: p.paymentStatus || 'Paid',
+        checkIn: p.date,
+        checkInTime: p.slot || '10:00 AM',
+        checkOut: p.date,
+        checkOutTime: '',
+        actualCheckOut: null,
+        actualCheckOutTime: null,
         timestamp: p.createdAt || p.date,
         status: p.status || 'Active',
         source: 'pool_walkin'
       }))
     ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
-    const grandLifetimeRevenue = (archive.historicalTotalRevenue || 0) + totalRevenue;
-
     return {
       timeframe,
       summary: {
-        totalRevenue,
-        grandLifetimeRevenue,
-        historicalArchivedRevenue: archive.historicalTotalRevenue || 0,
-        roomRevenue,
-        poolRevenue,
+        // 5 Primary Key Management Metrics
+        totalRoomBookingTillDate,
+        todayRoomBookingCount,
+        todayRevenue,
+        monthlyRevenue,
+        tillNowRevenue,
+        // Additional Analytics
+        timeframeTotalRevenue,
+        roomRevenue: timeframeRoomRevenue,
+        poolRevenue: timeframePoolRevenue,
         totalEntries,
         roomBookingsCount: filteredRoomBookings.length,
         poolPassesCount: filteredPoolBookings.length,
         cashRevenue,
         upiRevenue,
         cardRevenue,
+        historicalArchivedRevenue: archive.historicalTotalRevenue || 0,
         retentionPolicy: '60 Days (2 Months) Data Recycling Active'
       },
       dailyBreakdown,
       dateReport,
       monthlyHistory,
-      recentTransactions: combinedTransactions.slice(0, 50)
+      recentTransactions: combinedTransactions.slice(0, 100)
     };
   }
 };
