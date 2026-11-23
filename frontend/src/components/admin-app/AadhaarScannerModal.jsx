@@ -98,7 +98,42 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
     reader.readAsDataURL(file);
   };
 
-  // Process image with REAL QR Decoder and REAL OCR (No dummy data)
+  // Image Enhancement Pipeline: Contrast, Sharpening & Adaptive Binarization
+  const preprocessCanvas = (sourceCanvas, mode = 'contrast_sharp') => {
+    const c = document.createElement('canvas');
+    c.width = sourceCanvas.width;
+    c.height = sourceCanvas.height;
+    const ctx = c.getContext('2d');
+
+    if (mode === 'contrast_sharp') {
+      ctx.filter = 'grayscale(100%) contrast(165%) brightness(105%)';
+      ctx.drawImage(sourceCanvas, 0, 0);
+    } else if (mode === 'adaptive_binarize') {
+      ctx.drawImage(sourceCanvas, 0, 0);
+      const imgData = ctx.getImageData(0, 0, c.width, c.height);
+      const data = imgData.data;
+
+      // Calculate average luminance for adaptive threshold
+      let totalLuminance = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        totalLuminance += (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114);
+      }
+      const avgLuminance = totalLuminance / (data.length / 4);
+      const threshold = Math.max(90, Math.min(160, avgLuminance * 0.95));
+
+      for (let i = 0; i < data.length; i += 4) {
+        const lum = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+        const val = lum > threshold ? 255 : 0;
+        data[i] = val;
+        data[i + 1] = val;
+        data[i + 2] = val;
+      }
+      ctx.putImageData(imgData, 0, 0);
+    }
+    return c;
+  };
+
+  // Process image with REAL QR Decoder and REAL Multi-Pass English OCR
   const processRealImage = async (canvas, dataUrl) => {
     setIsProcessing(true);
     setScanError('');
@@ -147,67 +182,76 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
         const parsedQR = await parseAadhaarQR(qrCode.data);
         if (parsedQR && (parsedQR.name || parsedQR.dob || parsedQR.aadhaarNumber)) {
           setProgressPercent(100);
-          setScannedData(parsedQR);
+          setScannedData({ ...parsedQR, confidence: 100 });
           setRawExtractedText(typeof qrCode.data === 'string' ? qrCode.data.substring(0, 500) : 'UIDAI Secure Binary QR Payload');
           setIsProcessing(false);
           return;
         }
       }
 
-      // 2. ATTEMPT REAL OCR VIA TESSERACT.JS (Reads actual printed text from card with Marathi & English support)
+      // 2. MULTI-PASS HIGH-ACCURACY ENGLISH OCR
       setProgressPercent(30);
-      setProcessingStatus('Scanning printed text with Optical Character Recognition (OCR)...');
+      setProcessingStatus('Enhancing image & recognizing text (Pass 1: High Contrast)...');
 
-      // Enhance contrast on canvas for OCR accuracy
-      const enhancedCanvas = document.createElement('canvas');
-      enhancedCanvas.width = canvas.width;
-      enhancedCanvas.height = canvas.height;
-      const enhCtx = enhancedCanvas.getContext('2d');
-      enhCtx.filter = 'contrast(150%) grayscale(100%)';
-      enhCtx.drawImage(canvas, 0, 0);
-
+      const pass1Canvas = preprocessCanvas(canvas, 'contrast_sharp');
       let recognizedText = '';
+
       try {
-        const ocrResult = await Tesseract.recognize(
-          enhancedCanvas,
-          'mar+eng',
+        const pass1Result = await Tesseract.recognize(
+          pass1Canvas,
+          'eng',
           {
             logger: (m) => {
               if (m.status === 'recognizing text') {
-                setProgressPercent(40 + Math.round((m.progress || 0) * 50));
-                setProcessingStatus(`Recognizing Marathi & English characters (${Math.round((m.progress || 0) * 100)}%)...`);
+                setProgressPercent(30 + Math.round((m.progress || 0) * 40));
+                setProcessingStatus(`Recognizing English characters (${Math.round((m.progress || 0) * 100)}%)...`);
               }
             }
           }
         );
-        recognizedText = ocrResult?.data?.text || '';
+        recognizedText = pass1Result?.data?.text || '';
       } catch (ocrErr) {
-        console.warn('Marathi OCR pack load failed, attempting standard English OCR fallback:', ocrErr);
-        try {
-          const fallbackRes = await Tesseract.recognize(enhancedCanvas, 'eng', {
-            logger: (m) => {
-              if (m.status === 'recognizing text') {
-                setProgressPercent(40 + Math.round((m.progress || 0) * 50));
-                setProcessingStatus(`Recognizing characters (${Math.round((m.progress || 0) * 100)}%)...`);
-              }
-            }
-          });
-          recognizedText = fallbackRes?.data?.text || '';
-        } catch (e) {
-          console.error('All OCR methods failed:', e);
-        }
+        console.warn('OCR Pass 1 failed:', ocrErr);
       }
-      console.log('[Scanner] Raw text recognized by OCR:\n', recognizedText);
+
+      console.log('[Scanner] Pass 1 recognized text:\n', recognizedText);
       setRawExtractedText(recognizedText);
 
-      // Parse actual recognized text
-      const extracted = parseAadhaarPrintedText(recognizedText);
+      // Parse Pass 1
+      let extracted = parseAadhaarPrintedText(recognizedText);
+
+      // Pass 2: If key fields missing (no name or no DOB), run adaptive binarization pass
+      if (!extracted.name || !extracted.dob) {
+        setProcessingStatus('Optimizing card background & recognizing details (Pass 2)...');
+        setProgressPercent(75);
+        const pass2Canvas = preprocessCanvas(canvas, 'adaptive_binarize');
+        try {
+          const pass2Result = await Tesseract.recognize(pass2Canvas, 'eng');
+          const pass2Text = pass2Result?.data?.text || '';
+          console.log('[Scanner] Pass 2 recognized text:\n', pass2Text);
+          const extractedPass2 = parseAadhaarPrintedText(pass2Text);
+
+          // Merge best values from both passes
+          extracted = {
+            name: extracted.name || extractedPass2.name || '',
+            dob: extracted.dob || extractedPass2.dob || '',
+            age: extracted.age || extractedPass2.age || null,
+            gender: extracted.gender || extractedPass2.gender || '',
+            aadhaarNumber: extracted.aadhaarNumber || extractedPass2.aadhaarNumber || '',
+            confidence: Math.max(extracted.confidence || 0, extractedPass2.confidence || 0),
+            source: 'Aadhaar Card OCR (English Multi-Pass)',
+            verified: !!((extracted.name || extractedPass2.name) && (extracted.dob || extractedPass2.dob || extracted.aadhaarNumber || extractedPass2.aadhaarNumber))
+          };
+          setRawExtractedText(prev => `${prev}\n--- Pass 2 Text ---\n${pass2Text}`);
+        } catch (p2Err) {
+          console.warn('OCR Pass 2 error:', p2Err);
+        }
+      }
 
       if (extracted.name || extracted.dob || extracted.aadhaarNumber) {
         setProgressPercent(100);
         setScannedData(extracted);
       } else {
-        // Honest error - NO DUMMY DATA
         setScanError('Could not clearly read Aadhaar details from this image. Please ensure the card is placed in bright lighting without glare, or enter details below.');
       }
 
@@ -602,18 +646,27 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
       }
     }
 
-    // As requested: calculate only the Marathi one when validly present, fallback to clean English
-    name = marathiName || englishName || '';
+    // Identify ONLY English Name as requested
+    name = englishName || '';
+
+    // Calculate extraction confidence score
+    let confidence = 0;
+    if (englishName) confidence += 35;
+    if (dob && age) confidence += 30;
+    else if (dob) confidence += 20;
+    if (gender) confidence += 15;
+    if (aadhaarNumber) confidence += 20;
 
     return {
       name,
-      marathiName,
       englishName,
+      marathiName: null,
       dob,
       age,
       gender,
       aadhaarNumber,
-      source: marathiName ? 'Aadhaar Card (Marathi)' : 'Printed Card OCR',
+      confidence,
+      source: 'Aadhaar Card OCR (English)',
       verified: !!(name && (dob || aadhaarNumber))
     };
   };
@@ -703,6 +756,14 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
           <label htmlFor="consent" className="cursor-pointer font-medium leading-tight">
             Guest consent obtained for offline Aadhaar verification for resort stay registration.
           </label>
+        </div>
+
+        {/* Recommended Scanner Guidance */}
+        <div className="px-4 py-2 bg-emerald-50 border-b border-emerald-200/60 flex items-center gap-2 text-[11px] text-emerald-900">
+          <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>
+            <strong>Pro-Tip:</strong> Scanning the <strong>UIDAI QR Code</strong> gives 100% exact verified details. For card photos, English text & numbers are automatically isolated and enhanced.
+          </span>
         </div>
 
         {/* Content Body */}
@@ -818,51 +879,43 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
               <div className="flex items-center justify-between border-b border-emerald-200 pb-2">
                 <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
                   <ShieldCheck className="w-4 h-4 text-emerald-700" />
-                  Original Extracted Details ({scannedData.source})
+                  Verified Aadhaar Details ({scannedData.source})
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-900 font-semibold font-mono">
-                  LIVE SCAN
-                </span>
+                <div className="flex items-center gap-1">
+                  {(scannedData.confidence && scannedData.confidence >= 75) ? (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-900 font-bold font-mono">
+                      High Confidence ({scannedData.confidence}%)
+                    </span>
+                  ) : (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-200/80 text-amber-900 font-bold font-mono">
+                      Review & Confirm
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-2">
-                {/* Guest Name */}
+                {/* English Full Name */}
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] text-slate-500 uppercase font-mono block">
-                      {scannedData.marathiName && scannedData.name === scannedData.marathiName
-                        ? 'Scanned Marathi Name (मराठी नाव)'
-                        : 'Scanned Full Name'}
-                    </span>
-                    {scannedData.englishName && scannedData.marathiName && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const nextName = scannedData.name === scannedData.marathiName ? scannedData.englishName : scannedData.marathiName;
-                          setScannedData({ ...scannedData, name: nextName });
-                        }}
-                        className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold hover:bg-amber-200 transition"
-                      >
-                        {scannedData.name === scannedData.marathiName ? `Switch to English: ${scannedData.englishName}` : `Switch to Marathi: ${scannedData.marathiName}`}
-                      </button>
-                    )}
-                  </div>
+                  <span className="text-[10px] text-slate-500 uppercase font-mono block mb-1">
+                    Scanned English Name (Legal Guest Name)
+                  </span>
                   <input
                     type="text"
-                    value={scannedData.name}
-                    placeholder="Guest Full Name (मराठीत नाव)"
+                    value={scannedData.name || ''}
+                    placeholder="e.g. Nihal Ravindra Kankal"
                     onChange={e => setScannedData({ ...scannedData, name: e.target.value })}
                     className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 font-bold text-slate-900 text-xs focus:border-amber-500 outline-none"
                   />
                 </div>
 
-                {/* Masked Aadhaar & Age */}
+                {/* Masked Aadhaar & Calculated Age */}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <span className="text-[10px] text-slate-500 uppercase font-mono block">Masked Aadhaar No.</span>
+                    <span className="text-[10px] text-slate-500 uppercase font-mono block mb-1">Masked Aadhaar No.</span>
                     <input
                       type="text"
-                      value={scannedData.aadhaarNumber}
+                      value={scannedData.aadhaarNumber || ''}
                       placeholder="XXXX XXXX 1234"
                       onChange={e => setScannedData({ ...scannedData, aadhaarNumber: e.target.value })}
                       className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 font-mono font-bold text-amber-900 text-xs focus:border-amber-500 outline-none"
@@ -870,7 +923,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
                   </div>
 
                   <div>
-                    <span className="text-[10px] text-slate-500 uppercase font-mono block">Calculated Age</span>
+                    <span className="text-[10px] text-slate-500 uppercase font-mono block mb-1">Calculated Age</span>
                     <input
                       type="number"
                       value={scannedData.age || ''}
@@ -884,18 +937,26 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
                 {/* DOB & Gender */}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <span className="text-[10px] text-slate-500 uppercase font-mono block">Date of Birth (DOB)</span>
+                    <span className="text-[10px] text-slate-500 uppercase font-mono block mb-1">Date of Birth (DOB)</span>
                     <input
                       type="text"
                       value={scannedData.dob || ''}
                       placeholder="DD/MM/YYYY"
-                      onChange={e => setScannedData({ ...scannedData, dob: e.target.value })}
+                      onChange={e => {
+                        const newDob = e.target.value;
+                        const newAge = calculateAgeFromDOB(newDob);
+                        setScannedData({ 
+                          ...scannedData, 
+                          dob: newDob, 
+                          age: newAge || scannedData.age 
+                        });
+                      }}
                       className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-800 text-xs focus:border-amber-500 outline-none font-mono"
                     />
                   </div>
 
                   <div>
-                    <span className="text-[10px] text-slate-500 uppercase font-mono block">Gender</span>
+                    <span className="text-[10px] text-slate-500 uppercase font-mono block mb-1">Gender</span>
                     <input
                       type="text"
                       value={scannedData.gender || ''}

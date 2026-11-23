@@ -4,7 +4,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const uri = process.env.MONGODB_URI;
 
 console.log('Testing connection to MongoDB Atlas...');
-console.log('URI target: sadguru.kftglmx.mongodb.net/sadguru_resort');
+console.log('URI target: cluster0.jrhvtpn.mongodb.net/sadguru_resort');
 
 mongoose.connect(uri, {
   serverSelectionTimeoutMS: 8000
