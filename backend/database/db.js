@@ -1456,6 +1456,13 @@ const db = {
       return createdDate === todayStr || checkInDate === todayStr;
     }).length;
 
+    // Monthly Room Bookings Count (rooms booked or checked-in this month)
+    const monthlyRoomBookingsCount = validAllBookings.filter(b => {
+      const createdDate = (b.createdAt || '').split('T')[0];
+      const checkInDate = (b.checkIn || '').split('T')[0];
+      return (createdDate.substring(0, 7) === currentMonthKey) || (checkInDate.substring(0, 7) === currentMonthKey);
+    }).length;
+
     // Helper: Calculate revenue settled for a single booking
     const getBookingSettledRevenue = (b) => {
       if (b.payments && b.payments.length > 0) {
@@ -1807,7 +1814,9 @@ const db = {
         totalRoomBookingTillDate,
         todayRoomBookingCount,
         todayRevenue,
+        todayPoolRevenue,
         monthlyRevenue,
+        monthlyRoomBookingsCount,
         tillNowRevenue,
         // Additional Analytics
         timeframeTotalRevenue,
