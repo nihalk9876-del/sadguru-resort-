@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import { App as CapApp } from '@capacitor/app';
 import { 
   BedDouble, Camera, Waves, TrendingUp, ClipboardList, 
   RefreshCw, LogOut, Wifi, WifiOff, Bell, Sparkles, X, CheckCircle2, AlertTriangle
@@ -68,6 +70,78 @@ export default function AdminApp() {
   const [isSocketConnected, setIsSocketConnected] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [showNotifHistory, setShowNotifHistory] = useState(false);
+  const [showWelcomeSplash, setShowWelcomeSplash] = useState(true);
+  const [exitToast, setExitToast] = useState(false);
+
+  const lastBackPressRef = useRef(0);
+
+  // Initial Welcome Splash timer (1.3 seconds)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowWelcomeSplash(false);
+    }, 1300);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Smart Back Button Navigation: Step back to matrix tab instead of exiting app
+  const switchTab = (tabName) => {
+    if (tabName !== activeTab) {
+      window.history.pushState({ tab: tabName }, '');
+      setActiveTab(tabName);
+    }
+  };
+
+  useEffect(() => {
+    // Anchor initial state in browser history
+    window.history.replaceState({ tab: 'matrix' }, '');
+
+    const handleBackStep = () => {
+      setActiveTab((currentTab) => {
+        if (currentTab !== 'matrix') {
+          // If on Spot Book, Pool, Reports, or Ledger -> Step back to Rooms (Matrix) view!
+          return 'matrix';
+        }
+
+        // On root matrix tab: require double-tap within 2s to exit app
+        const now = Date.now();
+        if (now - lastBackPressRef.current < 2000) {
+          try {
+            CapApp.exitApp();
+          } catch (e) {
+            window.history.back();
+          }
+        } else {
+          lastBackPressRef.current = now;
+          setExitToast(true);
+          setTimeout(() => setExitToast(false), 2000);
+          // Push state back so next back press remains inside app
+          window.history.pushState({ tab: 'matrix' }, '');
+        }
+        return currentTab;
+      });
+    };
+
+    // 1. Web / WebView history popstate
+    const onPopState = () => {
+      handleBackStep();
+    };
+    window.addEventListener('popstate', onPopState);
+
+    // 2. Capacitor Android hardware back button
+    let capListener = null;
+    try {
+      capListener = CapApp.addListener('backButton', () => {
+        handleBackStep();
+      });
+    } catch (e) {}
+
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      if (capListener && capListener.remove) {
+        capListener.remove();
+      }
+    };
+  }, []);
 
   // Request browser desktop notification permissions if permitted
   useEffect(() => {
@@ -200,7 +274,7 @@ export default function AdminApp() {
 
   const handleSelectRoomForBooking = (roomNum) => {
     setPreselectedRoom(roomNum);
-    setActiveTab('onspot');
+    switchTab('onspot');
   };
 
   const handleOnSpotBooking = async (bookingData) => {
@@ -239,6 +313,84 @@ export default function AdminApp() {
   return (
     <div className="min-h-screen bg-[#F3F4F6] text-slate-800 font-sans antialiased flex flex-col items-center">
       
+      {/* 1. Opening Luxury Welcome Splash Screen */}
+      <AnimatePresence>
+        {showWelcomeSplash && (
+          <motion.div
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.5, ease: 'easeInOut' }}
+            className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-b from-[#1C241B] via-[#243023] to-[#121911] text-amber-100 px-6 select-none"
+          >
+            {/* Ambient gold glow */}
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-amber-500/15 via-transparent to-transparent pointer-events-none" />
+
+            {/* Emblem with Gold Accent Spinner */}
+            <motion.div
+              initial={{ scale: 0.82, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.5, ease: 'easeOut' }}
+              className="relative mb-5 text-center"
+            >
+              <div className="w-24 h-24 mx-auto rounded-full p-1 bg-white/10 border-2 border-amber-400/60 shadow-[0_0_35px_rgba(223,176,108,0.4)] relative flex items-center justify-center">
+                <img
+                  src="/logo.png"
+                  alt="Sadguru Resort"
+                  className="w-full h-full object-contain rounded-full"
+                />
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 3.5, repeat: Infinity, ease: 'linear' }}
+                  className="absolute inset-0 rounded-full border-2 border-t-amber-400 border-r-transparent border-b-transparent border-l-transparent"
+                />
+              </div>
+            </motion.div>
+
+            {/* Welcome Typography */}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2, duration: 0.5 }}
+              className="text-center space-y-1.5"
+            >
+              <span className="text-[11px] uppercase tracking-widest text-amber-400 font-bold font-mono">
+                Shri Sadguru Resort
+              </span>
+              <h2 className="text-2xl font-bold text-white tracking-tight">
+                Welcome Rushi,
+              </h2>
+              <p className="text-xs text-amber-200/70">
+                Opening Operations Portal...
+              </p>
+            </motion.div>
+
+            {/* Progress Bar Indicator */}
+            <div className="w-36 bg-white/10 rounded-full h-1 overflow-hidden mt-6">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: '100%' }}
+                transition={{ duration: 1.1, ease: 'easeInOut' }}
+                className="h-full bg-gradient-to-r from-amber-400 via-amber-200 to-amber-400 rounded-full"
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 2. Double-tap to exit gentle Toast */}
+      <AnimatePresence>
+        {exitToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-20 z-50 px-4 py-2 bg-slate-900/90 text-white text-xs font-semibold rounded-full shadow-xl backdrop-blur-sm pointer-events-none border border-white/10"
+          >
+            Press back again to exit
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Mobile/Tablet Application Frame */}
       <div className="w-full max-w-lg min-h-screen bg-[#F8F9FA] shadow-xl flex flex-col relative border-x border-slate-200">
         
@@ -494,7 +646,7 @@ export default function AdminApp() {
           <nav className="pointer-events-auto bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl px-2 py-1.5 flex items-center justify-between">
             
             <button
-              onClick={() => setActiveTab('matrix')}
+              onClick={() => switchTab('matrix')}
               className={`flex-1 py-1.5 px-1 rounded-xl flex flex-col items-center gap-0.5 transition ${
                 activeTab === 'matrix' ? 'bg-[#FDE68A]/60 text-amber-900 font-bold' : 'text-slate-500 hover:text-slate-900'
               }`}
@@ -504,7 +656,7 @@ export default function AdminApp() {
             </button>
 
             <button
-              onClick={() => setActiveTab('onspot')}
+              onClick={() => switchTab('onspot')}
               className={`flex-1 py-1.5 px-1 rounded-xl flex flex-col items-center gap-0.5 transition ${
                 activeTab === 'onspot' ? 'bg-[#FDE68A]/60 text-amber-900 font-bold' : 'text-slate-500 hover:text-slate-900'
               }`}
@@ -514,7 +666,7 @@ export default function AdminApp() {
             </button>
 
             <button
-              onClick={() => setActiveTab('pool')}
+              onClick={() => switchTab('pool')}
               className={`flex-1 py-1.5 px-1 rounded-xl flex flex-col items-center gap-0.5 transition ${
                 activeTab === 'pool' ? 'bg-[#FDE68A]/60 text-amber-900 font-bold' : 'text-slate-500 hover:text-slate-900'
               }`}
@@ -524,7 +676,7 @@ export default function AdminApp() {
             </button>
 
             <button
-              onClick={() => setActiveTab('reports')}
+              onClick={() => switchTab('reports')}
               className={`flex-1 py-1.5 px-1 rounded-xl flex flex-col items-center gap-0.5 transition ${
                 activeTab === 'reports' ? 'bg-[#FDE68A]/60 text-amber-900 font-bold' : 'text-slate-500 hover:text-slate-900'
               }`}
@@ -534,7 +686,7 @@ export default function AdminApp() {
             </button>
 
             <button
-              onClick={() => setActiveTab('records')}
+              onClick={() => switchTab('records')}
               className={`flex-1 py-1.5 px-1 rounded-xl flex flex-col items-center gap-0.5 transition ${
                 activeTab === 'records' ? 'bg-[#FDE68A]/60 text-amber-900 font-bold' : 'text-slate-500 hover:text-slate-900'
               }`}

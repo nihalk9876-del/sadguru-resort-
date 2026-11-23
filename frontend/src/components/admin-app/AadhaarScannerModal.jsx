@@ -71,6 +71,17 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
       setIsTorchOn(false);
       setActiveMode('qr_live');
       startCamera();
+
+      // Intercept Android / browser back button to close scanner modal instead of exiting app
+      window.history.pushState({ modal: 'aadhaar_scanner' }, '');
+      const handleBackToClose = () => {
+        onClose();
+      };
+      window.addEventListener('popstate', handleBackToClose, { once: true });
+      return () => {
+        window.removeEventListener('popstate', handleBackToClose);
+        stopCamera();
+      };
     } else {
       stopCamera();
     }
