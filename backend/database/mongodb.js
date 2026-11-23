@@ -2,7 +2,9 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const mongoose = require('mongoose');
 
-// 1. Room Schema
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. ROOM SCHEMA
+// ─────────────────────────────────────────────────────────────────────────────
 const RoomSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
   roomNumber: { type: Number, required: true, unique: true },
@@ -20,11 +22,13 @@ const RoomSchema = new mongoose.Schema({
   floor: { type: String, default: '1st Floor' }
 }, { timestamps: true });
 
-// 2. Booking Schema
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. BOOKING SCHEMA (Room Bookings)
+// ─────────────────────────────────────────────────────────────────────────────
 const BookingSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
   type: { type: String, default: 'room' },
-  bookingSource: { type: String, default: 'online_website' },
+  bookingSource: { type: String, default: 'on_spot_walkin' },
   roomId: { type: String },
   roomNumber: { type: Number },
   roomName: { type: String },
@@ -32,6 +36,7 @@ const BookingSchema = new mongoose.Schema({
   customerName: { type: String, required: true },
   phone: { type: String, required: true },
   email: { type: String },
+  address: { type: String },
   aadhaarNumber: { type: String },
   dob: { type: String },
   age: { type: Number },
@@ -71,10 +76,16 @@ const BookingSchema = new mongoose.Schema({
   idType: { type: String, default: 'Aadhaar' },
   idMasked: { type: String },
   specialRequests: { type: String },
-  allottedBy: { type: String, default: 'System' }
+  allottedBy: { type: String, default: 'Admin (App)' },
+  cancellationReason: { type: String },
+  cancelledAt: { type: String },
+  notes: { type: String },
+  createdAt: { type: String }
 }, { timestamps: true });
 
-// 3. Pool Booking Schema
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. POOL BOOKING SCHEMA
+// ─────────────────────────────────────────────────────────────────────────────
 const PoolBookingSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
   type: { type: String, default: 'swimming_pool' },
@@ -83,6 +94,7 @@ const PoolBookingSchema = new mongoose.Schema({
   phone: { type: String, required: true },
   date: { type: String, required: true },
   entryTime: { type: String },
+  slot: { type: String },
   durationHours: { type: Number, default: 2 },
   validUntil: { type: String },
   adultCount: { type: Number, default: 1 },
@@ -91,35 +103,70 @@ const PoolBookingSchema = new mongoose.Schema({
   totalAmount: { type: Number, required: true },
   paymentStatus: { type: String, default: 'Paid' },
   paymentMethod: { type: String, default: 'Cash' },
-  status: { type: String, default: 'Active' }
+  status: { type: String, default: 'Active' },
+  notes: { type: String },
+  createdAt: { type: String }
 }, { timestamps: true });
 
-// Models
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. SETTINGS SCHEMA
+// ─────────────────────────────────────────────────────────────────────────────
+const SettingsSchema = new mongoose.Schema({
+  key: { type: String, default: 'global', unique: true },
+  resortName: { type: String, default: 'Sadguru Resort' },
+  tagline: { type: String, default: 'Where luxury meets tranquillity.' },
+  phone: { type: String, default: '+91 98220 11223' },
+  whatsapp: { type: String, default: '+91 98220 11223' },
+  email: { type: String, default: 'contact@sadgururesort.com' },
+  address: { type: String },
+  poolTimings: { type: String, default: '06:00 AM - 09:00 PM' },
+  adultPoolTicket: { type: Number, default: 350 },
+  childPoolTicket: { type: Number, default: 200 },
+  banquetCapacity: { type: Number, default: 500 },
+  lawnAreaSqFt: { type: String, default: '25,000+ sq.ft' },
+  taxPercentage: { type: Number, default: 12 }
+}, { timestamps: true });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. REVENUE ARCHIVE SCHEMA (Lifetime revenue, never resets)
+// ─────────────────────────────────────────────────────────────────────────────
+const RevenueArchiveSchema = new mongoose.Schema({
+  key: { type: String, default: 'global', unique: true },
+  historicalTotalRevenue: { type: Number, default: 0 },
+  historicalRoomBookingsCount: { type: Number, default: 0 },
+  historicalPoolPassesCount: { type: Number, default: 0 },
+  monthlySummary: { type: mongoose.Schema.Types.Mixed, default: {} }
+}, { timestamps: true });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODELS
+// ─────────────────────────────────────────────────────────────────────────────
 const Room = mongoose.models.Room || mongoose.model('Room', RoomSchema);
 const Booking = mongoose.models.Booking || mongoose.model('Booking', BookingSchema);
 const PoolBooking = mongoose.models.PoolBooking || mongoose.model('PoolBooking', PoolBookingSchema);
+const Settings = mongoose.models.Settings || mongoose.model('Settings', SettingsSchema);
+const RevenueArchive = mongoose.models.RevenueArchive || mongoose.model('RevenueArchive', RevenueArchiveSchema);
 
 let isConnected = false;
 
 async function connectMongo() {
   const uri = process.env.MONGODB_URI || process.env.MONGO_URI;
   if (!uri) {
-    console.log('[Database] No MONGODB_URI found in environment. Using synchronized JSON ledger fallback.');
+    console.log('[Database] No MONGODB_URI found in environment. Using JSON fallback.');
     return false;
   }
 
   try {
     if (isConnected) return true;
-    await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 5000
-    });
+    await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000 });
     isConnected = true;
+
     console.log('=================================================');
-    console.log('  MONGODB DATABASE CONNECTED SUCCESSFULLY!');
+    console.log('  MONGODB ATLAS DATABASE CONNECTED SUCCESSFULLY!');
     console.log('  URI:', uri.replace(/\/\/[^:]+:[^@]+@/, '//***:***@'));
     console.log('=================================================');
 
-    // Auto-sync rooms to MongoDB Atlas if not present
+    // Auto-seed rooms from data.json if not already in Atlas
     try {
       const roomCount = await Room.countDocuments();
       if (roomCount < 9) {
@@ -128,18 +175,44 @@ async function connectMongo() {
           for (const r of data.rooms) {
             await Room.findOneAndUpdate({ roomNumber: r.roomNumber }, r, { upsert: true, new: true });
           }
-          console.log(`  [MongoDB Atlas] Successfully seeded ${data.rooms.length} resort rooms to Atlas!`);
+          console.log(`  [Seed] Synced ${data.rooms.length} rooms to MongoDB Atlas.`);
         }
       } else {
-        console.log(`  [MongoDB Atlas] Verified ${roomCount} rooms active in Atlas.`);
+        console.log(`  [Atlas] ${roomCount} rooms verified in Atlas.`);
       }
-    } catch (syncErr) {
-      console.warn('  [MongoDB Atlas Sync Warning]:', syncErr.message);
+    } catch (seedErr) {
+      console.warn('  [Seed Warning]:', seedErr.message);
+    }
+
+    // Auto-seed settings if not present
+    try {
+      const settingsCount = await Settings.countDocuments();
+      if (settingsCount === 0) {
+        await Settings.create({
+          key: 'global',
+          resortName: 'Sadguru Resort',
+          tagline: 'Where luxury meets tranquillity.',
+          phone: '+91 98220 11223',
+          whatsapp: '+91 98220 11223',
+          email: 'contact@sadgururesort.com',
+          address: 'Near Dnyaneshwar Mandir, Jalamb Road, Shegaon - 444203, Maharashtra, India',
+          poolTimings: '06:00 AM - 09:00 PM',
+          adultPoolTicket: 350,
+          childPoolTicket: 200,
+          banquetCapacity: 500,
+          lawnAreaSqFt: '25,000+ sq.ft',
+          taxPercentage: 12
+        });
+        console.log('  [Seed] Default settings saved to Atlas.');
+      }
+    } catch (settErr) {
+      console.warn('  [Settings Seed Warning]:', settErr.message);
     }
 
     return true;
   } catch (err) {
     console.error('[Database] MongoDB connection failed:', err.message);
+    isConnected = false;
     return false;
   }
 }
@@ -149,5 +222,7 @@ module.exports = {
   Room,
   Booking,
   PoolBooking,
+  Settings,
+  RevenueArchive,
   getIsConnected: () => isConnected
 };

@@ -1,111 +1,16 @@
-const fs = require('fs');
-const path = require('path');
-const { DB_FILE, BOOKING_STATUS, ROOM_STATUS } = require('../config/constants');
+/**
+ * SADGURU RESORT — MongoDB-First Database Layer
+ * All reads and writes go directly to MongoDB Atlas.
+ * JSON file (data.json) is used only as a one-time room seed on first startup.
+ */
 
-// Mutex queue implementation to prevent race conditions during concurrent bookings
-class AsyncLock {
-  constructor() {
-    this.queue = Promise.resolve();
-  }
+const { BOOKING_STATUS, ROOM_STATUS } = require('../config/constants');
+const { Room, Booking, PoolBooking, Settings, RevenueArchive } = require('./mongodb');
 
-  acquire(fn) {
-    const next = this.queue.then(async () => {
-      try {
-        return await fn();
-      } catch (err) {
-        throw err;
-      }
-    });
-    this.queue = next.catch(() => {});
-    return next;
-  }
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER UTILITIES
+// ─────────────────────────────────────────────────────────────────────────────
 
-const dbLock = new AsyncLock();
-
-// Initial database schema
-const defaultData = {
-  admins: [],
-  rooms: [],
-  bookings: [],
-  poolBookings: [],
-  banquetBookings: [],
-  lawnBookings: [],
-  packages: [],
-  packageBookings: [],
-  inquiries: [],
-  reviews: [],
-  settings: {
-    resortName: 'Sadguru Resort',
-    tagline: 'Where luxury meets tranquillity.',
-    phone: '+91 98220 11223',
-    whatsapp: '+91 98220 11223',
-    email: 'contact@sadgururesort.com',
-    address: 'Near Dnyaneshwar Mandir, Jalamb Road, Shegaon - 444203, Maharashtra, India',
-    poolTimings: '06:00 AM - 09:00 PM',
-    adultPoolTicket: 350,
-    childPoolTicket: 200,
-    banquetCapacity: 500,
-    lawnAreaSqFt: '25,000+ sq.ft',
-    taxPercentage: 12
-  }
-};
-
-function readDb() {
-  try {
-    if (!fs.existsSync(DB_FILE)) {
-      writeDbDirect(defaultData);
-      return defaultData;
-    }
-    const raw = fs.readFileSync(DB_FILE, 'utf-8');
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error('Error reading DB, restoring backup/default:', err);
-    return defaultData;
-  }
-}
-
-function writeDbDirect(data) {
-  const tmpFile = `${DB_FILE}.tmp`;
-  fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), 'utf-8');
-  fs.renameSync(tmpFile, DB_FILE);
-}
-
-// Thread-safe update helper
-async function updateDb(mutator) {
-  return dbLock.acquire(async () => {
-    const data = readDb();
-    const result = await mutator(data);
-    writeDbDirect(data);
-    return result;
-  });
-}
-
-// Asynchronous MongoDB Atlas sync helper
-let mongoModels = null;
-function getMongoModels() {
-  if (!mongoModels) {
-    try {
-      mongoModels = require('./mongodb');
-    } catch (e) {}
-  }
-  return mongoModels;
-}
-
-function syncToMongo(modelName, query, doc) {
-  try {
-    const mm = getMongoModels();
-    if (mm && mm.getIsConnected() && mm[modelName]) {
-      mm[modelName].findOneAndUpdate(query, doc, { upsert: true, new: true }).catch(err => {
-        console.warn(`[Mongo Sync Error] ${modelName}:`, err.message);
-      });
-    }
-  } catch (err) {
-    console.warn(`[Mongo Sync Warning] ${modelName}:`, err.message);
-  }
-}
-
-// Date normalization helper (YYYY-MM-DD)
 function normalizeDateStr(d) {
   if (!d) return '';
   const dateObj = new Date(d);
@@ -113,15 +18,18 @@ function normalizeDateStr(d) {
   return dateObj.toISOString().split('T')[0];
 }
 
-// Core Date Overlap Logic:
-// [startA, endA) overlaps with [startB, endB) <=> (startA < endB) && (endA > startB)
 function isDateOverlap(startA, endA, startB, endB) {
   const sA = new Date(normalizeDateStr(startA) + 'T00:00:00Z').getTime();
   const eA = new Date(normalizeDateStr(endA) + 'T00:00:00Z').getTime();
   const sB = new Date(normalizeDateStr(startB) + 'T00:00:00Z').getTime();
   const eB = new Date(normalizeDateStr(endB) + 'T00:00:00Z').getTime();
-
   return sA < eB && eA > sB;
+}
+
+function calculateNights(checkIn, checkOut) {
+  const s = new Date(normalizeDateStr(checkIn) + 'T00:00:00Z').getTime();
+  const e = new Date(normalizeDateStr(checkOut) + 'T00:00:00Z').getTime();
+  return Math.max(1, Math.ceil((e - s) / (1000 * 60 * 60 * 24)));
 }
 
 function normalizeCategory(cat) {
@@ -131,69 +39,63 @@ function normalizeCategory(cat) {
   return 'Deluxe AC';
 }
 
-// Calculate number of nights between check-in and check-out
-function calculateNights(checkIn, checkOut) {
-  const s = new Date(normalizeDateStr(checkIn) + 'T00:00:00Z').getTime();
-  const e = new Date(normalizeDateStr(checkOut) + 'T00:00:00Z').getTime();
-  const diffTime = Math.max(0, e - s);
-  const nights = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  return Math.max(1, nights);
+function genBookingId(prefix, count) {
+  const year = new Date().getFullYear();
+  return `SR-${prefix}-${year}-${String(count).padStart(4, '0')}`;
 }
 
+async function getSettings() {
+  let s = await Settings.findOne({ key: 'global' }).lean();
+  if (!s) s = { adultPoolTicket: 350, childPoolTicket: 200, taxPercentage: 12 };
+  return s;
+}
+
+async function getArchive() {
+  let a = await RevenueArchive.findOne({ key: 'global' }).lean();
+  if (!a) {
+    a = await RevenueArchive.create({ key: 'global' });
+  }
+  return a;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DB MODULE
+// ─────────────────────────────────────────────────────────────────────────────
 const db = {
-  // Direct synchronized reader
-  getData: () => readDb(),
 
-  // Mutex lock executor for transactions
-  transaction: async (callback) => {
-    return dbLock.acquire(async () => {
-      const data = readDb();
-      const result = await callback(data);
-      writeDbDirect(data);
-      return result;
-    });
-  },
-
-  // -------------------------------------------------------------
-  // ROOM METHODS
-  // -------------------------------------------------------------
-  getRooms: () => {
-    const data = readDb();
-    const rooms = data.rooms || [];
-    const bookings = data.bookings || [];
+  // ───────────────────────────────────────────────────────────────────────────
+  // ROOMS
+  // ───────────────────────────────────────────────────────────────────────────
+  getRooms: async () => {
+    const rooms = await Room.find().sort({ roomNumber: 1 }).lean();
     const todayStr = new Date().toISOString().split('T')[0];
+    const bookings = await Booking.find({
+      status: { $nin: [BOOKING_STATUS.CANCELLED, 'Completed', 'Checked-Out'] }
+    }).lean();
 
     return rooms.map(room => {
-      if (room.status === ROOM_STATUS.MAINTENANCE) {
-        return { ...room, isOccupied: false };
-      }
+      if (room.status === ROOM_STATUS.MAINTENANCE) return { ...room, isOccupied: false };
 
-      // Check if room has an active checked-in or overlapping reservation
       const activeBooking = bookings.find(b => {
-        if (String(b.roomId) !== String(room.id) && String(b.roomNumber) !== String(room.roomNumber)) return false;
-        if (b.status === BOOKING_STATUS.CANCELLED || b.status === 'Completed' || b.status === 'Checked-Out') return false;
+        if (String(b.roomNumber) !== String(room.roomNumber)) return false;
         if (b.status === 'Checked-In') return true;
-        const checkInDate = normalizeDateStr(b.checkIn);
-        const checkOutDate = normalizeDateStr(b.checkOut);
-        return todayStr >= checkInDate && todayStr <= checkOutDate;
+        const ci = normalizeDateStr(b.checkIn);
+        const co = normalizeDateStr(b.checkOut);
+        return todayStr >= ci && todayStr <= co;
       });
 
-      const isOccupied = !!activeBooking;
       return {
         ...room,
-        isOccupied,
-        status: isOccupied ? 'Occupied' : 'Available',
-        occupant: isOccupied ? {
+        isOccupied: !!activeBooking,
+        status: activeBooking ? 'Occupied' : room.status,
+        occupant: activeBooking ? {
           bookingId: activeBooking.id,
           customerName: activeBooking.customerName,
           phone: activeBooking.phone,
-          aadhaarNumber: activeBooking.aadhaarNumber || null,
-          age: activeBooking.age || null,
           checkIn: activeBooking.checkIn,
           checkInTime: activeBooking.checkInTime || '12:00 PM',
           checkOut: activeBooking.checkOut,
           checkOutTime: activeBooking.checkOutTime || '11:00 AM',
-          occupiedUntil: `${activeBooking.checkOut} ${activeBooking.checkOutTime || '11:00 AM'}`,
           totalAmount: activeBooking.totalAmount,
           advancePaid: activeBooking.advancePaid,
           paymentMethod: activeBooking.paymentMethod || 'Cash'
@@ -202,578 +104,269 @@ const db = {
     });
   },
 
-  getRoomById: (id) => {
-    const data = readDb();
-    return data.rooms.find(r => String(r.id) === String(id) || String(r.roomNumber) === String(id));
+  getRoomById: async (id) => {
+    return Room.findOne({ $or: [{ id: String(id) }, { roomNumber: Number(id) }] }).lean();
   },
 
   updateRoom: async (id, updates) => {
-    return updateDb((data) => {
-      const idx = data.rooms.findIndex(r => String(r.id) === String(id) || String(r.roomNumber) === String(id));
-      if (idx === -1) throw new Error(`Room ${id} not found`);
-      data.rooms[idx] = { ...data.rooms[idx], ...updates, updatedAt: new Date().toISOString() };
-      return data.rooms[idx];
-    });
+    return Room.findOneAndUpdate(
+      { $or: [{ id: String(id) }, { roomNumber: Number(id) }] },
+      { ...updates, updatedAt: new Date().toISOString() },
+      { new: true }
+    ).lean();
   },
 
-  // Check if a specific room is available for given date range
-  isRoomAvailableForDates: (roomId, checkIn, checkOut, excludeBookingId = null) => {
-    const data = readDb();
-    const room = data.rooms.find(r => String(r.id) === String(roomId) || String(r.roomNumber) === String(roomId));
-    if (!room) return false;
-    if (room.status === ROOM_STATUS.MAINTENANCE) return false;
+  isRoomAvailableForDates: async (roomId, checkIn, checkOut, excludeBookingId = null) => {
+    const room = await Room.findOne({ $or: [{ id: String(roomId) }, { roomNumber: Number(roomId) }] }).lean();
+    if (!room || room.status === ROOM_STATUS.MAINTENANCE) return false;
 
-    // Check confirmed or pending bookings
-    const activeBookings = (data.bookings || []).filter(b => {
-      if (String(b.roomId) !== String(room.id) && String(b.roomNumber) !== String(room.roomNumber)) return false;
-      if (b.status === BOOKING_STATUS.CANCELLED) return false;
-      if (excludeBookingId && String(b.id) === String(excludeBookingId)) return false;
-      return true;
-    });
+    const query = {
+      roomNumber: room.roomNumber,
+      status: { $nin: [BOOKING_STATUS.CANCELLED, 'Checked-Out', 'Completed'] }
+    };
+    if (excludeBookingId) query.id = { $ne: String(excludeBookingId) };
 
-    for (const b of activeBookings) {
-      if (isDateOverlap(checkIn, checkOut, b.checkIn, b.checkOut)) {
-        return false;
-      }
-    }
-    return true;
+    const conflicts = await Booking.find(query).lean();
+    return !conflicts.some(b => isDateOverlap(checkIn, checkOut, b.checkIn, b.checkOut));
   },
 
-  // Get list of available rooms for a date range & optional category
-  getAvailableRooms: (checkIn, checkOut, category = null, guests = null) => {
-    const data = readDb();
+  getAvailableRooms: async (checkIn, checkOut, category = null, guests = null) => {
     const normIn = normalizeDateStr(checkIn);
     const normOut = normalizeDateStr(checkOut);
     const normCat = category ? normalizeCategory(category) : null;
 
-    return data.rooms.filter(room => {
-      if (room.status === ROOM_STATUS.MAINTENANCE) return false;
-      if (normCat && room.category.toLowerCase() !== normCat.toLowerCase()) return false;
-      if (guests && Number(guests) > room.capacity) return false;
+    const roomQuery = { status: { $ne: ROOM_STATUS.MAINTENANCE } };
+    if (normCat) roomQuery.category = { $regex: normCat, $options: 'i' };
+    if (guests) roomQuery.capacity = { $gte: Number(guests) };
 
-      // Check date conflicts
-      const conflicts = (data.bookings || []).some(b => {
-        if (String(b.roomId) !== String(room.id) && String(b.roomNumber) !== String(room.roomNumber)) return false;
-        if (b.status === BOOKING_STATUS.CANCELLED) return false;
-        return isDateOverlap(normIn, normOut, b.checkIn, b.checkOut);
-      });
+    const rooms = await Room.find(roomQuery).lean();
+    const bookedRooms = new Set();
 
-      return !conflicts;
-    });
+    const conflictBookings = await Booking.find({
+      status: { $nin: [BOOKING_STATUS.CANCELLED] },
+      checkIn: { $lt: normOut },
+      checkOut: { $gt: normIn }
+    }).lean();
+
+    conflictBookings.forEach(b => bookedRooms.add(b.roomNumber));
+    return rooms.filter(r => !bookedRooms.has(r.roomNumber));
   },
 
-  // -------------------------------------------------------------
-  // ROOM BOOKINGS & ATOMIC CONCURRENCY PROTECTION
-  // -------------------------------------------------------------
+  // ───────────────────────────────────────────────────────────────────────────
+  // ROOM BOOKINGS (Online / Website)
+  // ───────────────────────────────────────────────────────────────────────────
   createRoomBooking: async (bookingData) => {
-    return dbLock.acquire(async () => {
-      const data = readDb();
-      const normIn = normalizeDateStr(bookingData.checkIn);
-      const normOut = normalizeDateStr(bookingData.checkOut);
+    const normIn = normalizeDateStr(bookingData.checkIn);
+    const normOut = normalizeDateStr(bookingData.checkOut);
 
-      if (!normIn || !normOut) {
-        throw new Error('Valid check-in and check-out dates are required.');
-      }
-      if (new Date(normIn).getTime() >= new Date(normOut).getTime()) {
-        throw new Error('Check-out date must be after check-in date.');
-      }
+    if (!normIn || !normOut) throw new Error('Valid check-in and check-out dates are required.');
+    if (new Date(normIn) >= new Date(normOut)) throw new Error('Check-out must be after check-in.');
 
-      let targetRoom = null;
+    let targetRoom = null;
+    if (bookingData.roomId || bookingData.roomNumber) {
+      const qId = bookingData.roomId || bookingData.roomNumber;
+      targetRoom = await Room.findOne({ $or: [{ id: String(qId) }, { roomNumber: Number(qId) }] }).lean();
+      if (!targetRoom) throw new Error(`Room ${qId} not found.`);
+      if (targetRoom.status === ROOM_STATUS.MAINTENANCE) throw new Error(`Room ${targetRoom.roomNumber} is under maintenance.`);
 
-      // If specific room requested
-      if (bookingData.roomId || bookingData.roomNumber) {
-        const queryId = bookingData.roomId || bookingData.roomNumber;
-        targetRoom = data.rooms.find(r => String(r.id) === String(queryId) || String(r.roomNumber) === String(queryId));
-        if (!targetRoom) {
-          throw new Error(`Requested room ${queryId} was not found.`);
-        }
-        if (targetRoom.status === ROOM_STATUS.MAINTENANCE) {
-          throw new Error(`Room ${targetRoom.roomNumber} is currently closed for maintenance.`);
-        }
-
-        // Verify no overlapping active booking
-        const hasConflict = (data.bookings || []).some(b => {
-          if (String(b.roomId) !== String(targetRoom.id) && String(b.roomNumber) !== String(targetRoom.roomNumber)) return false;
-          if (b.status === BOOKING_STATUS.CANCELLED) return false;
-          return isDateOverlap(normIn, normOut, b.checkIn, b.checkOut);
-        });
-
-        if (hasConflict) {
-          throw new Error('Sorry! This room is already booked for the selected time slot. Please select another room.');
-        }
-      } else {
-        // Auto-assign available room matching category randomly
-        const requestedCategory = bookingData.category || 'Deluxe AC';
-        const normCat = normalizeCategory(requestedCategory);
-        
-        // Find all rooms in this category (not under maintenance)
-        const candidateRooms = data.rooms.filter(r => 
-          r.status !== ROOM_STATUS.MAINTENANCE && 
-          r.category.toLowerCase() === normCat.toLowerCase()
-        );
-
-        // Find all candidates without date overlap conflicts
-        const availableCandidates = candidateRooms.filter(candidate => {
-          const hasConflict = (data.bookings || []).some(b => {
-            if (String(b.roomId) !== String(candidate.id) && String(b.roomNumber) !== String(candidate.roomNumber)) return false;
-            if (b.status === BOOKING_STATUS.CANCELLED) return false;
-            return isDateOverlap(normIn, normOut, b.checkIn, b.checkOut);
-          });
-          return !hasConflict;
-        });
-
-        if (availableCandidates.length === 0) {
-          throw new Error(`All rooms in ${requestedCategory} are fully booked for the selected dates.`);
-        }
-
-        // Randomly allot from available candidate rooms
-        // (101-107 for AC Deluxe, 201-202 for Family Double Deluxe)
-        const randomIndex = Math.floor(Math.random() * availableCandidates.length);
-        targetRoom = availableCandidates[randomIndex];
-      }
-
-      // Generate unique Booking Reference
-      const year = new Date().getFullYear();
-      const count = (data.bookings || []).length + 101;
-      const bookingId = `SR-RM-${year}-${String(count).padStart(4, '0')}`;
-
-      const nights = calculateNights(normIn, normOut);
-      const nightlyRate = Number(bookingData.customPrice || bookingData.price || targetRoom.price);
-      const subtotal = nightlyRate * nights;
-      const taxAmount = Math.round(subtotal * ((data.settings.taxPercentage || 12) / 100));
-      const totalAmount = subtotal + taxAmount;
-      const advancePaid = bookingData.advancePaid !== undefined ? Number(bookingData.advancePaid) : totalAmount;
-      const remainingBalance = Math.max(0, totalAmount - advancePaid);
-
-      const newBooking = {
-        id: bookingId,
-        type: 'room',
-        roomId: targetRoom.id,
+      const conflict = await Booking.findOne({
         roomNumber: targetRoom.roomNumber,
-        roomName: targetRoom.name,
-        category: targetRoom.category,
-        customerName: bookingData.customerName,
-        phone: bookingData.phone,
-        email: bookingData.email,
-        address: bookingData.address || '',
-        idProofType: bookingData.idProofType || 'Aadhaar / Passport',
-        checkIn: normIn,
-        checkOut: normOut,
-        nights,
-        guests: Number(bookingData.guests || 2),
-        adults: Number(bookingData.adults || bookingData.guests || 2),
-        children: Number(bookingData.children || 0),
-        nightlyRate,
-        subtotal,
-        taxAmount,
-        totalAmount,
-        advancePaid,
-        remainingBalance,
-        paymentStatus: remainingBalance === 0 ? 'Paid' : (advancePaid > 0 ? 'Partial Advance' : 'Pending'),
-        paymentMethod: bookingData.paymentMethod || 'Online / Card / UPI',
-        status: bookingData.status || BOOKING_STATUS.CONFIRMED,
-        specialRequests: bookingData.specialRequests || '',
-        createdAt: new Date().toISOString()
-      };
+        status: { $nin: [BOOKING_STATUS.CANCELLED] },
+        checkIn: { $lt: normOut },
+        checkOut: { $gt: normIn }
+      }).lean();
+      if (conflict) throw new Error('Room is already booked for the selected dates.');
+    } else {
+      const normCat = normalizeCategory(bookingData.category || 'Deluxe AC');
+      const rooms = await Room.find({ status: { $ne: ROOM_STATUS.MAINTENANCE }, category: { $regex: normCat, $options: 'i' } }).lean();
+      const bookedRooms = new Set();
+      const conflicts = await Booking.find({
+        status: { $nin: [BOOKING_STATUS.CANCELLED] },
+        checkIn: { $lt: normOut },
+        checkOut: { $gt: normIn }
+      }).lean();
+      conflicts.forEach(b => bookedRooms.add(b.roomNumber));
+      const available = rooms.filter(r => !bookedRooms.has(r.roomNumber));
+      if (available.length === 0) throw new Error('No rooms available for selected dates.');
+      targetRoom = available[Math.floor(Math.random() * available.length)];
+    }
 
-      data.bookings.unshift(newBooking);
-      writeDbDirect(data);
-      syncToMongo('Booking', { id: newBooking.id }, newBooking);
-      return newBooking;
+    const count = await Booking.countDocuments();
+    const bookingId = genBookingId('RM', count + 101);
+    const settings = await getSettings();
+    const nights = calculateNights(normIn, normOut);
+    const nightlyRate = Number(bookingData.customPrice || bookingData.price || targetRoom.price);
+    const subtotal = nightlyRate * nights;
+    const taxAmount = Math.round(subtotal * ((settings.taxPercentage || 12) / 100));
+    const totalAmount = subtotal + taxAmount;
+    const advancePaid = bookingData.advancePaid !== undefined ? Number(bookingData.advancePaid) : totalAmount;
+    const remainingBalance = Math.max(0, totalAmount - advancePaid);
+
+    const newBooking = await Booking.create({
+      id: bookingId,
+      type: 'room',
+      bookingSource: 'online_website',
+      roomId: targetRoom.id,
+      roomNumber: targetRoom.roomNumber,
+      roomName: targetRoom.name,
+      category: targetRoom.category,
+      customerName: bookingData.customerName,
+      phone: bookingData.phone,
+      email: bookingData.email,
+      address: bookingData.address || '',
+      checkIn: normIn,
+      checkOut: normOut,
+      nights,
+      guests: Number(bookingData.guests || 2),
+      adults: Number(bookingData.adults || bookingData.guests || 2),
+      children: Number(bookingData.children || 0),
+      nightlyRate,
+      subtotal,
+      taxAmount,
+      totalAmount,
+      advancePaid,
+      remainingBalance,
+      paymentStatus: remainingBalance === 0 ? 'Paid' : (advancePaid > 0 ? 'Partial Advance' : 'Pending'),
+      paymentMethod: bookingData.paymentMethod || 'Online / Card / UPI',
+      status: bookingData.status || BOOKING_STATUS.CONFIRMED,
+      specialRequests: bookingData.specialRequests || '',
+      createdAt: new Date().toISOString()
     });
+
+    return newBooking.toObject();
   },
 
-  getBookings: (filters = {}) => {
-    const data = readDb();
-    let list = [...(data.bookings || [])];
-
-    if (filters.status) {
-      list = list.filter(b => b.status.toLowerCase() === filters.status.toLowerCase());
-    }
-    if (filters.paymentStatus) {
-      list = list.filter(b => b.paymentStatus.toLowerCase() === filters.paymentStatus.toLowerCase());
-    }
-    if (filters.category) {
-      list = list.filter(b => b.category.toLowerCase() === filters.category.toLowerCase());
-    }
+  getBookings: async (filters = {}) => {
+    const query = {};
+    if (filters.status) query.status = filters.status;
+    if (filters.paymentStatus) query.paymentStatus = filters.paymentStatus;
+    if (filters.category) query.category = filters.category;
     if (filters.search) {
-      const q = filters.search.toLowerCase();
-      list = list.filter(b => 
-        (b.id && b.id.toLowerCase().includes(q)) ||
-        (b.customerName && b.customerName.toLowerCase().includes(q)) ||
-        (b.phone && b.phone.toLowerCase().includes(q)) ||
-        (b.email && b.email.toLowerCase().includes(q)) ||
-        (String(b.roomNumber).includes(q))
-      );
+      const q = filters.search;
+      query.$or = [
+        { id: { $regex: q, $options: 'i' } },
+        { customerName: { $regex: q, $options: 'i' } },
+        { phone: { $regex: q, $options: 'i' } },
+        { email: { $regex: q, $options: 'i' } }
+      ];
     }
     if (filters.date) {
       const d = normalizeDateStr(filters.date);
-      list = list.filter(b => b.checkIn <= d && b.checkOut >= d);
+      query.checkIn = { $lte: d };
+      query.checkOut = { $gte: d };
     }
-
-    return list;
+    return Booking.find(query).sort({ createdAt: -1 }).lean();
   },
 
-  getBookingById: (id) => {
-    const data = readDb();
-    return (data.bookings || []).find(b => 
-      b.id.toLowerCase() === id.trim().toLowerCase()
-    );
+  getBookingById: async (id) => {
+    return Booking.findOne({ id: { $regex: new RegExp(`^${id.trim()}$`, 'i') } }).lean();
   },
 
-  getBookingByIdAndPhone: (id, phone) => {
-    const data = readDb();
-    const cleanId = id.trim().toLowerCase();
+  getBookingByIdAndPhone: async (id, phone) => {
     const cleanPhone = phone.replace(/[^0-9]/g, '');
-
-    return (data.bookings || []).find(b => {
-      const matchId = b.id.toLowerCase() === cleanId;
-      const bPhoneClean = (b.phone || '').replace(/[^0-9]/g, '');
-      const matchPhone = bPhoneClean.endsWith(cleanPhone) || cleanPhone.endsWith(bPhoneClean);
-      return matchId && matchPhone;
-    });
+    const booking = await Booking.findOne({ id: { $regex: new RegExp(`^${id.trim()}$`, 'i') } }).lean();
+    if (!booking) return null;
+    const bPhone = (booking.phone || '').replace(/[^0-9]/g, '');
+    if (bPhone.endsWith(cleanPhone) || cleanPhone.endsWith(bPhone)) return booking;
+    return null;
   },
 
   updateBookingStatus: async (bookingId, status, paymentStatus = null) => {
-    return updateDb((data) => {
-      const booking = (data.bookings || []).find(b => b.id.toLowerCase() === bookingId.toLowerCase());
-      if (!booking) throw new Error(`Booking ${bookingId} not found`);
-
-      if (status) booking.status = status;
-      if (paymentStatus) {
-        booking.paymentStatus = paymentStatus;
-        if (paymentStatus === 'Paid') {
-          booking.advancePaid = booking.totalAmount;
-          booking.remainingBalance = 0;
-        }
+    const updates = { updatedAt: new Date().toISOString() };
+    if (status) updates.status = status;
+    if (paymentStatus) {
+      updates.paymentStatus = paymentStatus;
+      if (paymentStatus === 'Paid') {
+        const b = await Booking.findOne({ id: bookingId }).lean();
+        if (b) { updates.advancePaid = b.totalAmount; updates.remainingBalance = 0; }
       }
-      booking.updatedAt = new Date().toISOString();
-      return booking;
-    });
+    }
+    return Booking.findOneAndUpdate({ id: bookingId }, updates, { new: true }).lean();
   },
 
   cancelBooking: async (bookingId, cancellationReason = 'Customer requested cancellation') => {
-    return updateDb((data) => {
-      const booking = (data.bookings || []).find(b => b.id.toLowerCase() === bookingId.toLowerCase());
-      if (!booking) throw new Error(`Booking ${bookingId} not found`);
-
-      booking.status = BOOKING_STATUS.CANCELLED;
-      booking.cancellationReason = cancellationReason;
-      booking.cancelledAt = new Date().toISOString();
-      return booking;
-    });
+    return Booking.findOneAndUpdate(
+      { id: bookingId },
+      { status: BOOKING_STATUS.CANCELLED, cancellationReason, cancelledAt: new Date().toISOString() },
+      { new: true }
+    ).lean();
   },
 
-  // -------------------------------------------------------------
-  // SWIMMING POOL BOOKINGS
-  // -------------------------------------------------------------
+  // ───────────────────────────────────────────────────────────────────────────
+  // POOL BOOKINGS (Website)
+  // ───────────────────────────────────────────────────────────────────────────
   createPoolBooking: async (poolData) => {
-    return dbLock.acquire(async () => {
-      const data = readDb();
-      const normDate = normalizeDateStr(poolData.date);
-      if (!normDate) throw new Error('Date is required for swimming pool booking.');
+    const normDate = normalizeDateStr(poolData.date);
+    if (!normDate) throw new Error('Date is required for pool booking.');
 
-      const year = new Date().getFullYear();
-      const count = (data.poolBookings || []).length + 101;
-      const bookingId = `SR-PL-${year}-${String(count).padStart(4, '0')}`;
+    const count = await PoolBooking.countDocuments();
+    const bookingId = genBookingId('PL', count + 101);
+    const settings = await getSettings();
 
-      const adultCount = Number(poolData.adultCount || 1);
-      const childCount = Number(poolData.childCount || 0);
-      const adultRate = data.settings.adultPoolTicket || 350;
-      const childRate = data.settings.childPoolTicket || 200;
-      const totalAmount = (adultCount * adultRate) + (childCount * childRate);
+    const adultCount = Number(poolData.adultCount || 1);
+    const childCount = Number(poolData.childCount || 0);
+    const totalAmount = (adultCount * (settings.adultPoolTicket || 350)) + (childCount * (settings.childPoolTicket || 200));
 
-      const newBooking = {
-        id: bookingId,
-        type: 'swimming_pool',
-        customerName: poolData.customerName,
-        phone: poolData.phone,
-        email: poolData.email,
-        date: normDate,
-        timeSlot: poolData.timeSlot || '04:00 PM - 07:00 PM',
-        adultCount,
-        childCount,
-        totalVisitors: adultCount + childCount,
-        totalAmount,
-        paymentStatus: poolData.paymentStatus || 'Paid',
-        paymentMethod: poolData.paymentMethod || 'UPI / Card',
-        status: BOOKING_STATUS.CONFIRMED,
-        notes: poolData.notes || '',
-        createdAt: new Date().toISOString()
-      };
-
-      if (!data.poolBookings) data.poolBookings = [];
-      data.poolBookings.unshift(newBooking);
-      writeDbDirect(data);
-      return newBooking;
+    const newBooking = await PoolBooking.create({
+      id: bookingId,
+      type: 'swimming_pool',
+      customerName: poolData.customerName,
+      phone: poolData.phone,
+      email: poolData.email,
+      date: normDate,
+      slot: poolData.timeSlot || '04:00 PM - 07:00 PM',
+      adultCount,
+      childCount,
+      totalVisitors: adultCount + childCount,
+      totalAmount,
+      paymentStatus: poolData.paymentStatus || 'Paid',
+      paymentMethod: poolData.paymentMethod || 'UPI / Card',
+      status: BOOKING_STATUS.CONFIRMED,
+      notes: poolData.notes || '',
+      createdAt: new Date().toISOString()
     });
+
+    return newBooking.toObject();
   },
 
-  getPoolBookings: (filters = {}) => {
-    const data = readDb();
-    let list = [...(data.poolBookings || [])];
-    if (filters.date) {
-      const d = normalizeDateStr(filters.date);
-      list = list.filter(b => b.date === d);
-    }
-    if (filters.status) {
-      list = list.filter(b => b.status.toLowerCase() === filters.status.toLowerCase());
-    }
-    return list;
+  getPoolBookings: async (filters = {}) => {
+    const query = {};
+    if (filters.date) query.date = normalizeDateStr(filters.date);
+    if (filters.status) query.status = filters.status;
+    return PoolBooking.find(query).sort({ createdAt: -1 }).lean();
   },
 
-  // -------------------------------------------------------------
-  // BANQUET HALL BOOKINGS & CONFLICT PREVENTION
-  // -------------------------------------------------------------
-  createBanquetBooking: async (banquetData) => {
-    return dbLock.acquire(async () => {
-      const data = readDb();
-      const normDate = normalizeDateStr(banquetData.date);
-      const slot = banquetData.timeSlot || 'Full Day';
-
-      if (!normDate) throw new Error('Event date is required.');
-
-      // Check slot conflict
-      if (slot === 'Full Day') {
-        const conflict = (data.banquetBookings || []).some(b => 
-          b.date === normDate && b.status === BOOKING_STATUS.CONFIRMED
-        );
-        if (conflict) {
-          throw new Error(`Banquet Hall is already reserved on ${normDate}.`);
-        }
-      } else {
-        const conflict = (data.banquetBookings || []).some(b => 
-          b.date === normDate && 
-          b.status === BOOKING_STATUS.CONFIRMED && 
-          (b.timeSlot === 'Full Day' || b.timeSlot === slot)
-        );
-        if (conflict) {
-          throw new Error(`Banquet Hall is already reserved on ${normDate} for ${slot}.`);
-        }
-      }
-
-      const year = new Date().getFullYear();
-      const count = (data.banquetBookings || []).length + 101;
-      const bookingId = `SR-BQ-${year}-${String(count).padStart(4, '0')}`;
-
-      const newBooking = {
-        id: bookingId,
-        type: 'banquet',
-        customerName: banquetData.customerName,
-        phone: banquetData.phone,
-        email: banquetData.email,
-        date: normDate,
-        timeSlot: slot,
-        eventType: banquetData.eventType || 'Wedding Function',
-        guestCount: Number(banquetData.guestCount || 100),
-        requirements: banquetData.requirements || 'Catering & Audio Setup',
-        estimatedAmount: Number(banquetData.estimatedAmount || 45000),
-        advancePaid: Number(banquetData.advancePaid || 15000),
-        status: banquetData.status || BOOKING_STATUS.CONFIRMED,
-        paymentStatus: banquetData.advancePaid > 0 ? 'Partial Advance' : 'Pending',
-        createdAt: new Date().toISOString()
-      };
-
-      if (!data.banquetBookings) data.banquetBookings = [];
-      data.banquetBookings.unshift(newBooking);
-      writeDbDirect(data);
-      return newBooking;
-    });
-  },
-
-  getBanquetBookings: (filters = {}) => {
-    const data = readDb();
-    let list = [...(data.banquetBookings || [])];
-    if (filters.date) {
-      list = list.filter(b => b.date === normalizeDateStr(filters.date));
-    }
-    if (filters.status) {
-      list = list.filter(b => b.status.toLowerCase() === filters.status.toLowerCase());
-    }
-    return list;
-  },
-
-  // -------------------------------------------------------------
-  // GREEN LAWN BOOKINGS & CONFLICT PREVENTION
-  // -------------------------------------------------------------
-  createLawnBooking: async (lawnData) => {
-    return dbLock.acquire(async () => {
-      const data = readDb();
-      const normDate = normalizeDateStr(lawnData.date);
-      if (!normDate) throw new Error('Event date is required.');
-
-      const conflict = (data.lawnBookings || []).some(b => 
-        b.date === normDate && b.status === BOOKING_STATUS.CONFIRMED
-      );
-      if (conflict) {
-        throw new Error(`The Lush Green Lawn is already booked for an event on ${normDate}.`);
-      }
-
-      const year = new Date().getFullYear();
-      const count = (data.lawnBookings || []).length + 101;
-      const bookingId = `SR-LW-${year}-${String(count).padStart(4, '0')}`;
-
-      const newBooking = {
-        id: bookingId,
-        type: 'lawn',
-        customerName: lawnData.customerName,
-        phone: lawnData.phone,
-        email: lawnData.email,
-        date: normDate,
-        eventType: lawnData.eventType || 'Grand Wedding Reception',
-        guestCount: Number(lawnData.guestCount || 250),
-        requirements: lawnData.requirements || 'Stage, Mandap & Lighting',
-        estimatedAmount: Number(lawnData.estimatedAmount || 65000),
-        advancePaid: Number(lawnData.advancePaid || 20000),
-        status: lawnData.status || BOOKING_STATUS.CONFIRMED,
-        paymentStatus: lawnData.advancePaid > 0 ? 'Partial Advance' : 'Pending',
-        createdAt: new Date().toISOString()
-      };
-
-      if (!data.lawnBookings) data.lawnBookings = [];
-      data.lawnBookings.unshift(newBooking);
-      writeDbDirect(data);
-      return newBooking;
-    });
-  },
-
-  getLawnBookings: (filters = {}) => {
-    const data = readDb();
-    let list = [...(data.lawnBookings || [])];
-    if (filters.date) {
-      list = list.filter(b => b.date === normalizeDateStr(filters.date));
-    }
-    if (filters.status) {
-      list = list.filter(b => b.status.toLowerCase() === filters.status.toLowerCase());
-    }
-    return list;
-  },
-
-  // -------------------------------------------------------------
-  // PACKAGES
-  // -------------------------------------------------------------
-  getPackages: () => {
-    const data = readDb();
-    return data.packages || [];
-  },
-
-  getPackageById: (id) => {
-    const data = readDb();
-    return (data.packages || []).find(p => String(p.id) === String(id));
-  },
-
-  updatePackage: async (id, updates) => {
-    return updateDb((data) => {
-      const idx = (data.packages || []).findIndex(p => String(p.id) === String(id));
-      if (idx === -1) throw new Error(`Package ${id} not found`);
-      data.packages[idx] = { ...data.packages[idx], ...updates, updatedAt: new Date().toISOString() };
-      return data.packages[idx];
-    });
-  },
-
-  createPackageBooking: async (pkgBookingData) => {
-    return dbLock.acquire(async () => {
-      const data = readDb();
-      const year = new Date().getFullYear();
-      const count = (data.packageBookings || []).length + 101;
-      const bookingId = `SR-PK-${year}-${String(count).padStart(4, '0')}`;
-
-      const newBooking = {
-        id: bookingId,
-        type: 'package',
-        packageId: pkgBookingData.packageId,
-        packageName: pkgBookingData.packageName,
-        customerName: pkgBookingData.customerName,
-        phone: pkgBookingData.phone,
-        email: pkgBookingData.email,
-        preferredDate: normalizeDateStr(pkgBookingData.preferredDate),
-        guests: Number(pkgBookingData.guests || 2),
-        totalAmount: Number(pkgBookingData.totalAmount || 0),
-        status: BOOKING_STATUS.CONFIRMED,
-        paymentStatus: 'Paid',
-        notes: pkgBookingData.notes || '',
-        createdAt: new Date().toISOString()
-      };
-
-      if (!data.packageBookings) data.packageBookings = [];
-      data.packageBookings.unshift(newBooking);
-      writeDbDirect(data);
-      return newBooking;
-    });
-  },
-
-  getPackageBookings: () => {
-    const data = readDb();
-    return data.packageBookings || [];
-  },
-
-  // -------------------------------------------------------------
-  // CONTACT INQUIRIES & REVIEWS
-  // -------------------------------------------------------------
-  createInquiry: async (inquiryData) => {
-    return updateDb((data) => {
-      const count = (data.inquiries || []).length + 1;
-      const newInquiry = {
-        id: `INQ-${String(count).padStart(4, '0')}`,
-        name: inquiryData.name,
-        email: inquiryData.email,
-        phone: inquiryData.phone,
-        subject: inquiryData.subject || 'General Inquiry',
-        message: inquiryData.message,
-        status: 'Unread',
-        createdAt: new Date().toISOString()
-      };
-      if (!data.inquiries) data.inquiries = [];
-      data.inquiries.unshift(newInquiry);
-      return newInquiry;
-    });
-  },
-
-  getInquiries: () => {
-    const data = readDb();
-    return data.inquiries || [];
-  },
-
-  getReviews: () => {
-    const data = readDb();
-    return data.reviews || [];
-  },
-
-  // -------------------------------------------------------------
+  // ───────────────────────────────────────────────────────────────────────────
   // SETTINGS
-  // -------------------------------------------------------------
-  getSettings: () => {
-    const data = readDb();
-    return data.settings || {};
+  // ───────────────────────────────────────────────────────────────────────────
+  getSettings: async () => {
+    return getSettings();
   },
 
   updateSettings: async (updates) => {
-    return updateDb((data) => {
-      data.settings = { ...data.settings, ...updates, updatedAt: new Date().toISOString() };
-      return data.settings;
-    });
+    return Settings.findOneAndUpdate(
+      { key: 'global' },
+      { ...updates, updatedAt: new Date().toISOString() },
+      { new: true, upsert: true }
+    ).lean();
   },
 
-  // -------------------------------------------------------------
-  // ADMIN STATS & ANALYTICS
-  // -------------------------------------------------------------
-  getAdminStats: () => {
-    const data = readDb();
+  // ───────────────────────────────────────────────────────────────────────────
+  // ADMIN STATS (Room matrix, occupancy, revenue)
+  // ───────────────────────────────────────────────────────────────────────────
+  getAdminStats: async () => {
     const todayStr = new Date().toISOString().split('T')[0];
-    const tomorrowObj = new Date();
-    tomorrowObj.setDate(tomorrowObj.getDate() + 1);
-    const tomorrowStr = tomorrowObj.toISOString().split('T')[0];
+    const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
 
-    const allBookings = data.bookings || [];
-    const poolBookings = data.poolBookings || [];
-    const banquetBookings = data.banquetBookings || [];
-    const lawnBookings = data.lawnBookings || [];
-    const packageBookings = data.packageBookings || [];
+    const [allBookings, poolBookings, rooms] = await Promise.all([
+      Booking.find().lean(),
+      PoolBooking.find().lean(),
+      Room.find().lean()
+    ]);
 
-    const totalRooms = (data.rooms || []).length;
-    const maintenanceRooms = (data.rooms || []).filter(r => r.status === ROOM_STATUS.MAINTENANCE).length;
+    const totalRooms = rooms.length;
+    const maintenanceRooms = rooms.filter(r => r.status === ROOM_STATUS.MAINTENANCE).length;
 
-    // Room occupancy today
     const occupiedRoomNumbers = new Set();
     allBookings.forEach(b => {
       if (b.status !== BOOKING_STATUS.CANCELLED && b.checkIn <= todayStr && b.checkOut > todayStr) {
@@ -784,83 +377,43 @@ const db = {
     const occupiedCount = occupiedRoomNumbers.size;
     const availableCount = Math.max(0, totalRooms - occupiedCount - maintenanceRooms);
 
-    // Bookings classification
     const todayBookings = allBookings.filter(b => b.checkIn === todayStr);
     const tomorrowBookings = allBookings.filter(b => b.checkIn === tomorrowStr);
     const upcomingBookings = allBookings.filter(b => b.checkIn > todayStr && b.status !== BOOKING_STATUS.CANCELLED);
     const completedBookings = allBookings.filter(b => b.checkOut <= todayStr && b.status !== BOOKING_STATUS.CANCELLED);
     const cancelledBookings = allBookings.filter(b => b.status === BOOKING_STATUS.CANCELLED);
 
-    // Revenue calculations (Room + Pool + Banquet + Lawn + Packages)
-    let totalRevenue = 0;
-    let pendingPayments = 0;
-
+    let totalRevenue = 0, pendingPayments = 0;
     allBookings.forEach(b => {
       if (b.status !== BOOKING_STATUS.CANCELLED) {
         totalRevenue += Number(b.advancePaid || b.totalAmount || 0);
         pendingPayments += Number(b.remainingBalance || 0);
       }
     });
-
     poolBookings.forEach(p => {
-      if (p.status !== BOOKING_STATUS.CANCELLED) {
-        totalRevenue += Number(p.totalAmount || 0);
-      }
+      if (p.status !== BOOKING_STATUS.CANCELLED) totalRevenue += Number(p.totalAmount || 0);
     });
 
-    banquetBookings.forEach(bq => {
-      if (bq.status !== BOOKING_STATUS.CANCELLED) {
-        totalRevenue += Number(bq.advancePaid || bq.estimatedAmount || 0);
-      }
-    });
-
-    lawnBookings.forEach(lw => {
-      if (lw.status !== BOOKING_STATUS.CANCELLED) {
-        totalRevenue += Number(lw.advancePaid || lw.estimatedAmount || 0);
-      }
-    });
-
-    packageBookings.forEach(pkg => {
-      if (pkg.status !== BOOKING_STATUS.CANCELLED) {
-        totalRevenue += Number(pkg.totalAmount || 0);
-      }
-    });
-
-    // Day-wise last 7 days revenue & bookings
     const dailyStats = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
-      const dayName = d.toLocaleDateString('en-US', { weekday: 'short' });
-
-      let dayRev = 0;
-      let dayBookingsCount = 0;
-
+      let dayRev = 0, dayBookingsCount = 0;
       allBookings.forEach(b => {
-        const bookedOn = (b.createdAt || b.checkIn).split('T')[0];
+        const bookedOn = (b.createdAt || b.checkIn || '').split('T')[0];
         if (bookedOn === dateStr && b.status !== BOOKING_STATUS.CANCELLED) {
           dayRev += Number(b.advancePaid || b.totalAmount || 0);
           dayBookingsCount++;
         }
       });
-
-      dailyStats.push({
-        date: dateStr,
-        day: dayName,
-        revenue: dayRev,
-        bookings: dayBookingsCount
-      });
+      dailyStats.push({ date: dateStr, day: d.toLocaleDateString('en-US', { weekday: 'short' }), revenue: dayRev, bookings: dayBookingsCount });
     }
 
-    // Monthly stats for current year
-    const monthlyStats = [];
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const currentYear = new Date().getFullYear();
-
-    for (let m = 0; m < 12; m++) {
-      let monthRev = 0;
-      let count = 0;
+    const monthlyStats = months.map((month, m) => {
+      let monthRev = 0, count = 0;
       allBookings.forEach(b => {
         const bDate = new Date(b.createdAt || b.checkIn);
         if (bDate.getFullYear() === currentYear && bDate.getMonth() === m && b.status !== BOOKING_STATUS.CANCELLED) {
@@ -868,12 +421,8 @@ const db = {
           count++;
         }
       });
-      monthlyStats.push({
-        month: months[m],
-        revenue: monthRev,
-        bookings: count
-      });
-    }
+      return { month, revenue: monthRev, bookings: count };
+    });
 
     return {
       summary: {
@@ -889,10 +438,7 @@ const db = {
         availableRooms: availableCount,
         occupiedRooms: occupiedCount,
         maintenanceRooms,
-        poolBookingsCount: poolBookings.length,
-        banquetBookingsCount: banquetBookings.length,
-        lawnBookingsCount: lawnBookings.length,
-        packageBookingsCount: packageBookings.length
+        poolBookingsCount: poolBookings.length
       },
       todayBookings,
       tomorrowBookings,
@@ -901,56 +447,39 @@ const db = {
     };
   },
 
-  // -------------------------------------------------------------
-  // ADMIN APP: REAL-TIME ROOM OCCUPANCY MATRIX (FLOOR PLAN)
-  // -------------------------------------------------------------
-  getRoomMatrix: () => {
-    const data = readDb();
-    const rooms = data.rooms || [];
-    const allBookings = data.bookings || [];
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
+  // ───────────────────────────────────────────────────────────────────────────
+  // ROOM MATRIX (Floor Plan — Live)
+  // ───────────────────────────────────────────────────────────────────────────
+  getRoomMatrix: async () => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const [rooms, allBookings] = await Promise.all([
+      Room.find().sort({ roomNumber: 1 }).lean(),
+      Booking.find({ status: { $nin: [BOOKING_STATUS.CANCELLED, 'Completed', 'Checked-Out'] } }).lean()
+    ]);
 
     return rooms.map(room => {
-      // Find currently active occupant in this room
       const activeBooking = allBookings.find(b => {
-        if (String(b.roomId) !== String(room.id) && String(b.roomNumber) !== String(room.roomNumber)) return false;
-        if (b.status === BOOKING_STATUS.CANCELLED || b.status === 'Completed' || b.status === 'Checked-Out') return false;
-
-        // If explicitly checked in or within date range
+        if (String(b.roomNumber) !== String(room.roomNumber)) return false;
         if (b.status === 'Checked-In') return true;
-
-        const checkInDate = normalizeDateStr(b.checkIn);
-        const checkOutDate = normalizeDateStr(b.checkOut);
-        return todayStr >= checkInDate && todayStr <= checkOutDate;
+        const ci = normalizeDateStr(b.checkIn);
+        const co = normalizeDateStr(b.checkOut);
+        return todayStr >= ci && todayStr <= co;
       });
 
-      // Find upcoming unfulfilled future reservation for this room
       const upcomingBooking = allBookings.find(b => {
-        if (String(b.roomId) !== String(room.id) && String(b.roomNumber) !== String(room.roomNumber)) return false;
-        // Strictly exclude Cancelled, Completed, and Checked-Out bookings
-        if (b.status === BOOKING_STATUS.CANCELLED || b.status === 'Completed' || b.status === 'Checked-Out') return false;
+        if (String(b.roomNumber) !== String(room.roomNumber)) return false;
         if (activeBooking && b.id === activeBooking.id) return false;
-        // Only Confirmed / Pending / Reserved future bookings
-        if (b.status !== BOOKING_STATUS.CONFIRMED && b.status !== 'Pending' && b.status !== 'Reserved') return false;
-        const checkInDate = normalizeDateStr(b.checkIn);
-        return checkInDate >= todayStr;
+        if (!['Confirmed', 'Pending', 'Reserved'].includes(b.status)) return false;
+        return normalizeDateStr(b.checkIn) >= todayStr;
       });
 
-      // Determine 5-state room lifecycle: Available, Reserved, Occupied, Cleaning, Under Maintenance
       let calculatedStatus = ROOM_STATUS.AVAILABLE;
       if (room.status === ROOM_STATUS.MAINTENANCE || room.status === 'Under Maintenance') {
         calculatedStatus = ROOM_STATUS.MAINTENANCE;
       } else if (room.status === ROOM_STATUS.CLEANING || room.status === 'Cleaning') {
         calculatedStatus = ROOM_STATUS.CLEANING;
       } else if (activeBooking) {
-        if (activeBooking.status === 'Checked-In') {
-          calculatedStatus = ROOM_STATUS.OCCUPIED;
-        } else if (activeBooking.status === BOOKING_STATUS.CONFIRMED || activeBooking.status === 'Reserved') {
-          calculatedStatus = ROOM_STATUS.RESERVED;
-        } else {
-          calculatedStatus = ROOM_STATUS.OCCUPIED;
-        }
+        calculatedStatus = activeBooking.status === 'Checked-In' ? ROOM_STATUS.OCCUPIED : ROOM_STATUS.RESERVED;
       } else if (upcomingBooking && upcomingBooking.checkIn === todayStr) {
         calculatedStatus = ROOM_STATUS.RESERVED;
       }
@@ -1008,655 +537,384 @@ const db = {
     });
   },
 
-  // -------------------------------------------------------------
-  // ADMIN APP: ON-SPOT ROOM ALLOTMENT WITH AADHAAR & CUSTOM RATE
-  // -------------------------------------------------------------
+  // ───────────────────────────────────────────────────────────────────────────
+  // ON-SPOT ROOM BOOKING (Admin App — Walk-in with Aadhaar)
+  // ───────────────────────────────────────────────────────────────────────────
   createOnSpotRoomBooking: async (bookingData) => {
-    return dbLock.acquire(async () => {
-      const data = readDb();
-      const {
-        roomNumber,
-        customerName,
-        phone,
-        aadhaarNumber,
-        dob,
-        age,
-        stayType = 'Family',
-        secondGuestName = null,
-        secondGuestAge = null,
-        secondGuestAadhaar = null,
-        guests = 2,
-        adults = 2,
-        children = 0,
-        checkInDate,
-        checkInTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-        checkOutDate,
-        checkOutTime = '11:00 AM',
-        durationHours = 24,
-        rate,
-        advancePaid,
-        paymentMethod = 'Cash',
-        notes = ''
-      } = bookingData;
+    const {
+      roomNumber,
+      customerName,
+      phone,
+      aadhaarNumber,
+      dob,
+      age,
+      stayType = 'Family',
+      secondGuestName = null,
+      secondGuestAge = null,
+      secondGuestAadhaar = null,
+      guests = 2,
+      adults = 2,
+      children = 0,
+      checkInDate,
+      checkInTime,
+      checkOutDate,
+      checkOutTime = '11:00 AM',
+      durationHours = 24,
+      rate,
+      advancePaid,
+      paymentMethod = 'Cash',
+      notes = ''
+    } = bookingData;
 
-      if (!roomNumber) throw new Error('Room number selection is required (101-107, 201-202).');
-      if (!customerName || !customerName.trim()) throw new Error('Guest Name is required (from Aadhaar scan or manual entry).');
-      if (!phone || !phone.trim()) throw new Error('Guest Contact Phone Number is required.');
+    if (!roomNumber) throw new Error('Room number is required.');
+    if (!customerName || !customerName.trim()) throw new Error('Guest name is required.');
+    if (!phone || !phone.trim()) throw new Error('Guest phone number is required.');
 
-      // Find selected room
-      const targetRoom = data.rooms.find(r => String(r.roomNumber) === String(roomNumber) || String(r.id) === String(roomNumber));
-      if (!targetRoom) throw new Error(`Room ${roomNumber} not found.`);
-      if (targetRoom.status === ROOM_STATUS.MAINTENANCE) {
-        throw new Error(`Room ${roomNumber} is currently under maintenance.`);
-      }
+    const targetRoom = await Room.findOne({ $or: [{ roomNumber: Number(roomNumber) }, { id: String(roomNumber) }] }).lean();
+    if (!targetRoom) throw new Error(`Room ${roomNumber} not found.`);
+    if (targetRoom.status === ROOM_STATUS.MAINTENANCE) throw new Error(`Room ${roomNumber} is under maintenance.`);
 
-      const normIn = normalizeDateStr(checkInDate || new Date().toISOString().split('T')[0]);
-      let normOut = checkOutDate ? normalizeDateStr(checkOutDate) : null;
-      if (!normOut) {
-        const nextDay = new Date(normIn);
-        nextDay.setDate(nextDay.getDate() + 1);
-        normOut = nextDay.toISOString().split('T')[0];
-      }
+    const normIn = normalizeDateStr(checkInDate || new Date().toISOString().split('T')[0]);
+    const normOut = checkOutDate
+      ? normalizeDateStr(checkOutDate)
+      : (() => { const d = new Date(normIn); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0]; })();
 
-      // Check conflict with active bookings
-      const hasConflict = (data.bookings || []).some(b => {
-        if (String(b.roomId) !== String(targetRoom.id) && String(b.roomNumber) !== String(targetRoom.roomNumber)) return false;
-        if (b.status === BOOKING_STATUS.CANCELLED || b.status === 'Completed' || b.status === 'Checked-Out') return false;
-        return isDateOverlap(normIn, normOut, b.checkIn, b.checkOut);
-      });
+    const conflict = await Booking.findOne({
+      roomNumber: targetRoom.roomNumber,
+      status: { $nin: [BOOKING_STATUS.CANCELLED, 'Completed', 'Checked-Out'] },
+      checkIn: { $lt: normOut },
+      checkOut: { $gt: normIn }
+    }).lean();
 
-      if (hasConflict) {
-        throw new Error('Sorry! This room is already booked for the selected time slot. Please select another room.');
-      }
+    if (conflict) throw new Error('Room is already booked for the selected time slot. Please select another room.');
 
-      const nights = calculateNights(normIn, normOut);
-      const nightlyRate = Number(rate !== undefined && rate !== '' ? rate : targetRoom.price);
-      const totalAmount = nightlyRate * nights;
-      const paid = advancePaid !== undefined && advancePaid !== '' ? Number(advancePaid) : totalAmount;
-      const remainingBalance = Math.max(0, totalAmount - paid);
+    const count = await Booking.countDocuments();
+    const bookingId = genBookingId('SPOT', count + 101);
+    const nights = calculateNights(normIn, normOut);
+    const nightlyRate = Number(rate !== undefined && rate !== '' ? rate : targetRoom.price);
+    const totalAmount = nightlyRate * nights;
+    const paid = advancePaid !== undefined && advancePaid !== '' ? Number(advancePaid) : totalAmount;
+    const remainingBalance = Math.max(0, totalAmount - paid);
+    const resolvedCheckInTime = checkInTime || new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-      const year = new Date().getFullYear();
-      const count = (data.bookings || []).length + 101;
-      const bookingId = `SR-SPOT-${year}-${String(count).padStart(4, '0')}`;
-
-      const newBooking = {
-        id: bookingId,
-        type: 'room',
-        bookingSource: 'on_spot_walkin',
-        roomId: targetRoom.id,
-        roomNumber: targetRoom.roomNumber,
-        roomName: targetRoom.name,
-        category: targetRoom.category,
-        customerName: customerName.trim(),
-        phone: phone.trim(),
-        email: bookingData.email || `walkin.${roomNumber}@sadgururesort.com`,
-        aadhaarNumber: aadhaarNumber ? String(aadhaarNumber).trim() : null,
-        dob: dob || null,
-        age: age ? Number(age) : null,
-        stayType: stayType === 'Couple' ? 'Couple' : 'Family',
-        secondGuestName: secondGuestName ? String(secondGuestName).trim() : null,
-        secondGuestAge: secondGuestAge ? Number(secondGuestAge) : null,
-        secondGuestAadhaar: secondGuestAadhaar ? String(secondGuestAadhaar).trim() : null,
-        guests: Number(guests),
-        adults: Number(adults),
-        children: Number(children),
-        checkIn: normIn,
-        checkInTime,
-        checkOut: normOut,
-        checkOutTime,
-        durationHours: Number(durationHours) || (nights * 24),
-        nights,
-        nightlyRate,
-        subtotal: totalAmount,
-        taxAmount: 0,
-        totalAmount,
-        advancePaid: paid,
-        remainingBalance,
-        paymentMethod: paymentMethod || 'Cash',
-        paymentStatus: remainingBalance === 0 ? 'Paid' : 'Partial Advance',
-        status: 'Checked-In', // Immediately checked-in on spot
-        specialRequests: notes,
-        allottedBy: 'Admin (App)',
-        createdAt: new Date().toISOString()
-      };
-
-      if (!data.bookings) data.bookings = [];
-      data.bookings.unshift(newBooking);
-      writeDbDirect(data);
-      syncToMongo('Booking', { id: newBooking.id }, newBooking);
-      return newBooking;
+    const newBooking = await Booking.create({
+      id: bookingId,
+      type: 'room',
+      bookingSource: 'on_spot_walkin',
+      roomId: targetRoom.id,
+      roomNumber: targetRoom.roomNumber,
+      roomName: targetRoom.name,
+      category: targetRoom.category,
+      customerName: customerName.trim(),
+      phone: phone.trim(),
+      email: bookingData.email || `walkin.${roomNumber}@sadgururesort.com`,
+      aadhaarNumber: aadhaarNumber ? String(aadhaarNumber).trim() : null,
+      dob: dob || null,
+      age: age ? Number(age) : null,
+      stayType: stayType === 'Couple' ? 'Couple' : 'Family',
+      secondGuestName: secondGuestName ? String(secondGuestName).trim() : null,
+      secondGuestAge: secondGuestAge ? Number(secondGuestAge) : null,
+      secondGuestAadhaar: secondGuestAadhaar ? String(secondGuestAadhaar).trim() : null,
+      guests: Number(guests),
+      adults: Number(adults),
+      children: Number(children),
+      checkIn: normIn,
+      checkInTime: resolvedCheckInTime,
+      checkOut: normOut,
+      checkOutTime,
+      durationHours: Number(durationHours) || (nights * 24),
+      nights,
+      nightlyRate,
+      subtotal: totalAmount,
+      taxAmount: 0,
+      totalAmount,
+      advancePaid: paid,
+      remainingBalance,
+      paymentMethod: paymentMethod || 'Cash',
+      paymentStatus: remainingBalance === 0 ? 'Paid' : 'Partial Advance',
+      status: 'Checked-In',
+      specialRequests: notes,
+      allottedBy: 'Admin (App)',
+      createdAt: new Date().toISOString()
     });
+
+    return newBooking.toObject();
   },
 
-  // -------------------------------------------------------------
-  // ADMIN APP: EARLY CHECKOUT & HOUSEKEEPING WORKFLOW
-  // -------------------------------------------------------------
+  // ───────────────────────────────────────────────────────────────────────────
+  // CHECKOUT & HOUSEKEEPING
+  // ───────────────────────────────────────────────────────────────────────────
   earlyCheckoutRoomBooking: async (roomNumberOrId, actualCheckOutTime) => {
-    return updateDb((data) => {
-      const now = new Date();
-      const todayStr = now.toISOString().split('T')[0];
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+    const checkOutTimeStr = actualCheckOutTime || now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-      const targetRoom = data.rooms.find(r => String(r.roomNumber) === String(roomNumberOrId) || String(r.id) === String(roomNumberOrId));
+    const targetRoom = await Room.findOne({
+      $or: [{ roomNumber: Number(roomNumberOrId) }, { id: String(roomNumberOrId) }]
+    }).lean();
 
-      // Find all active/pending/in-house bookings for this room and mark them Checked-Out
-      const activeBookings = (data.bookings || []).filter(b => {
-        const matchesRoom = String(b.roomNumber) === String(roomNumberOrId) || String(b.roomId) === String(roomNumberOrId) || String(b.id) === String(roomNumberOrId);
-        if (!matchesRoom) return false;
-        return ['Checked-In', 'Confirmed', 'Reserved', 'Occupied', 'Pending'].includes(b.status);
-      });
+    const activeBookings = await Booking.find({
+      $or: [
+        { roomNumber: Number(roomNumberOrId) },
+        { roomId: String(roomNumberOrId) },
+        { id: String(roomNumberOrId) }
+      ],
+      status: { $in: ['Checked-In', 'Confirmed', 'Reserved', 'Occupied', 'Pending'] }
+    }).lean();
 
-      let lastCheckedOutBooking = null;
+    if (!targetRoom && activeBookings.length === 0) throw new Error(`Room ${roomNumberOrId} not found.`);
 
-      activeBookings.forEach(booking => {
-        const scheduledCheckOut = booking.checkOut;
-        const scheduledCheckOutTime = booking.checkOutTime;
+    let lastCheckedOutBooking = null;
 
-        booking.status = 'Checked-Out';
-        booking.actualCheckOut = todayStr;
-        booking.actualCheckOutTime = actualCheckOutTime || now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-        booking.originalExpectedCheckOut = `${scheduledCheckOut} ${scheduledCheckOutTime || '11:00 AM'}`;
-        booking.isEarlyCheckout = true;
-        booking.updatedAt = now.toISOString();
-
-        // Ensure all checkout revenue is fully credited & settled
-        if (booking.remainingBalance > 0) {
-          booking.advancePaid = (Number(booking.advancePaid) || 0) + Number(booking.remainingBalance);
-          if (!booking.payments) booking.payments = [];
-          booking.payments.push({
-            id: `PAY-CO-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-            amount: Number(booking.remainingBalance),
-            method: booking.paymentMethod || 'Cash',
-            date: now.toISOString(),
-            notes: 'Settled at Check-Out'
-          });
-          booking.remainingBalance = 0;
-          booking.paymentStatus = 'Paid';
-        }
-        syncToMongo('Booking', { id: booking.id }, booking);
-        lastCheckedOutBooking = booking;
-      });
-
-      if (!targetRoom && activeBookings.length === 0) {
-        throw new Error(`Room ${roomNumberOrId} not found.`);
-      }
-
-      // Transition room status to CLEANING
-      if (targetRoom) {
-        targetRoom.status = ROOM_STATUS.CLEANING;
-        targetRoom.updatedAt = now.toISOString();
-        syncToMongo('Room', { roomNumber: targetRoom.roomNumber }, targetRoom);
-      }
-
-      return { 
-        booking: lastCheckedOutBooking || { roomNumber: roomNumberOrId, status: 'Checked-Out', customerName: 'Guest' }, 
-        room: targetRoom 
+    for (const booking of activeBookings) {
+      const updates = {
+        status: 'Checked-Out',
+        actualCheckOut: todayStr,
+        actualCheckOutTime: checkOutTimeStr,
+        originalExpectedCheckOut: `${booking.checkOut} ${booking.checkOutTime || '11:00 AM'}`,
+        isEarlyCheckout: true,
+        updatedAt: now.toISOString()
       };
-    });
+
+      if ((booking.remainingBalance || 0) > 0) {
+        const newPayment = {
+          id: `PAY-CO-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          amount: Number(booking.remainingBalance),
+          method: booking.paymentMethod || 'Cash',
+          date: now.toISOString(),
+          notes: 'Settled at Check-Out'
+        };
+        updates.advancePaid = (Number(booking.advancePaid) || 0) + Number(booking.remainingBalance);
+        updates.remainingBalance = 0;
+        updates.paymentStatus = 'Paid';
+        updates.payments = [...(booking.payments || []), newPayment];
+      }
+
+      lastCheckedOutBooking = await Booking.findOneAndUpdate({ id: booking.id }, updates, { new: true }).lean();
+    }
+
+    let updatedRoom = null;
+    if (targetRoom) {
+      updatedRoom = await Room.findOneAndUpdate(
+        { roomNumber: targetRoom.roomNumber },
+        { status: ROOM_STATUS.CLEANING, updatedAt: now.toISOString() },
+        { new: true }
+      ).lean();
+    }
+
+    return {
+      booking: lastCheckedOutBooking || { roomNumber: roomNumberOrId, status: 'Checked-Out', customerName: 'Guest' },
+      room: updatedRoom || targetRoom
+    };
   },
 
-  // Complete Housekeeping Cleaning -> Moves room to AVAILABLE
   completeCleaning: async (roomNumberOrId) => {
-    return updateDb((data) => {
-      const targetRoom = data.rooms.find(r => String(r.roomNumber) === String(roomNumberOrId) || String(r.id) === String(roomNumberOrId));
-      if (!targetRoom) {
-        throw new Error(`Room ${roomNumberOrId} not found.`);
-      }
-
-      targetRoom.status = ROOM_STATUS.AVAILABLE;
-      targetRoom.updatedAt = new Date().toISOString();
-      syncToMongo('Room', { roomNumber: targetRoom.roomNumber }, targetRoom);
-
-      return targetRoom;
-    });
+    const room = await Room.findOneAndUpdate(
+      { $or: [{ roomNumber: Number(roomNumberOrId) }, { id: String(roomNumberOrId) }] },
+      { status: ROOM_STATUS.AVAILABLE, updatedAt: new Date().toISOString() },
+      { new: true }
+    ).lean();
+    if (!room) throw new Error(`Room ${roomNumberOrId} not found.`);
+    return room;
   },
 
-  // Manual 5-State Room Status Update
   updateRoomStatus: async (roomNumberOrId, newStatus) => {
-    return updateDb((data) => {
-      const targetRoom = data.rooms.find(r => String(r.roomNumber) === String(roomNumberOrId) || String(r.id) === String(roomNumberOrId));
-      if (!targetRoom) {
-        throw new Error(`Room ${roomNumberOrId} not found.`);
-      }
-
-      targetRoom.status = newStatus;
-      targetRoom.updatedAt = new Date().toISOString();
-      syncToMongo('Room', { roomNumber: targetRoom.roomNumber }, targetRoom);
-
-      return targetRoom;
-    });
+    const room = await Room.findOneAndUpdate(
+      { $or: [{ roomNumber: Number(roomNumberOrId) }, { id: String(roomNumberOrId) }] },
+      { status: newStatus, updatedAt: new Date().toISOString() },
+      { new: true }
+    ).lean();
+    if (!room) throw new Error(`Room ${roomNumberOrId} not found.`);
+    return room;
   },
 
-  // Payment Sub-ledger: Record payment & recalculate balance
-  addBookingPayment: async (bookingId, paymentData) => {
-    return updateDb((data) => {
-      const booking = (data.bookings || []).find(b => b.id.toLowerCase() === bookingId.toLowerCase());
-      if (!booking) {
-        throw new Error(`Booking ${bookingId} not found.`);
-      }
-
-      const pAmount = Number(paymentData.amount) || 0;
-      if (pAmount <= 0) throw new Error('Payment amount must be greater than 0.');
-
-      if (!booking.payments) booking.payments = [];
-      booking.payments.push({
-        id: `PAY-${Date.now()}`,
-        amount: pAmount,
-        method: paymentData.paymentMethod || 'Cash',
-        date: new Date().toISOString(),
-        notes: paymentData.notes || ''
-      });
-
-      booking.advancePaid = (Number(booking.advancePaid) || 0) + pAmount;
-      booking.remainingBalance = Math.max(0, Number(booking.totalAmount) - booking.advancePaid);
-      booking.paymentStatus = booking.remainingBalance === 0 ? 'Paid' : 'Partial Advance';
-      booking.updatedAt = new Date().toISOString();
-
-      return booking;
-    });
-  },
-
-  // Backward compatibility wrapper
   checkoutRoomBooking: async (roomNumberOrId) => {
     const res = await db.earlyCheckoutRoomBooking(roomNumberOrId);
     return res.booking;
   },
 
-  // -------------------------------------------------------------
-  // ADMIN APP: SWIMMING POOL PASS ALLOTMENT (NO AADHAAR NEEDED)
-  // -------------------------------------------------------------
-  createPoolPass: async (passData) => {
-    return dbLock.acquire(async () => {
-      const data = readDb();
-      const {
-        phone,
-        guestCount = 1,
-        adultCount = 1,
-        childCount = 0,
-        durationHours = 2,
-        customerName = 'Walk-in Swimmer',
-        customRate,
-        paymentMethod = 'Cash'
-      } = passData;
+  addBookingPayment: async (bookingId, paymentData) => {
+    const booking = await Booking.findOne({ id: bookingId }).lean();
+    if (!booking) throw new Error(`Booking ${bookingId} not found.`);
 
-      if (!phone || !phone.trim()) {
-        throw new Error('Guest mobile number is required for swimming pool allotment.');
-      }
+    const pAmount = Number(paymentData.amount) || 0;
+    if (pAmount <= 0) throw new Error('Payment amount must be greater than 0.');
 
-      const year = new Date().getFullYear();
-      const count = (data.poolBookings || []).length + 101;
-      const passId = `SR-PL-PASS-${year}-${String(count).padStart(4, '0')}`;
-
-      const adultRate = data.settings.adultPoolTicket || 350;
-      const childRate = data.settings.childPoolTicket || 200;
-      const defaultTotal = (Number(adultCount) * adultRate) + (Number(childCount) * childRate);
-      const totalAmount = customRate !== undefined && customRate !== '' ? Number(customRate) : defaultTotal;
-
-      const now = new Date();
-      const entryTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-      const validUntilDate = new Date(now.getTime() + (Number(durationHours) || 2) * 60 * 60 * 1000);
-      const validUntil = validUntilDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-
-      const newPass = {
-        id: passId,
-        type: 'swimming_pool',
-        bookingSource: 'pool_walkin_app',
-        customerName: customerName ? customerName.trim() : 'Guest Swimmer',
-        phone: phone.trim(),
-        date: now.toISOString().split('T')[0],
-        entryTime,
-        durationHours: Number(durationHours) || 2,
-        validUntil,
-        adultCount: Number(adultCount),
-        childCount: Number(childCount),
-        totalVisitors: Number(guestCount) || (Number(adultCount) + Number(childCount)),
-        totalAmount,
-        paymentStatus: 'Paid',
-        paymentMethod: paymentMethod || 'Cash',
-        status: 'Active',
-        createdAt: now.toISOString()
-      };
-
-      if (!data.poolBookings) data.poolBookings = [];
-      data.poolBookings.unshift(newPass);
-      writeDbDirect(data);
-      return newPass;
-    });
-  },
-
-  // -------------------------------------------------------------
-  // RECYCLE DATA POLICY: PURGE DETAIL >60 DAYS (2 MONTHS) WHILE PRESERVING REVENUE
-  // -------------------------------------------------------------
-  recycleOldDataPolicy: (data) => {
-    if (!data) return;
-    if (!data.revenueArchive) {
-      data.revenueArchive = {
-        historicalTotalRevenue: 0,
-        historicalRoomBookingsCount: 0,
-        historicalPoolPassesCount: 0,
-        monthlySummary: {}
-      };
-    }
-
-    const twoMonthsAgo = new Date();
-    twoMonthsAgo.setDate(twoMonthsAgo.getDate() - 60);
-    const cutoffStr = twoMonthsAgo.toISOString().split('T')[0];
-
-    let recycledRooms = 0;
-    let recycledRevenue = 0;
-    const keptBookings = [];
-
-    (data.bookings || []).forEach(b => {
-      const bDate = (b.checkOut || b.createdAt || b.checkIn || '').split('T')[0];
-      const isSettled = b.status === 'Checked-Out' || b.status === 'Completed' || b.status === BOOKING_STATUS.CANCELLED;
-      const isOlderThan2Months = bDate < cutoffStr;
-
-      if (isOlderThan2Months && isSettled) {
-        recycledRooms++;
-        const rev = Number(b.advancePaid !== undefined ? b.advancePaid : b.totalAmount) || 0;
-        recycledRevenue += rev;
-        const monthKey = bDate.substring(0, 7); // 'YYYY-MM'
-
-        if (!data.revenueArchive.monthlySummary[monthKey]) {
-          data.revenueArchive.monthlySummary[monthKey] = {
-            month: monthKey,
-            roomRevenue: 0,
-            poolRevenue: 0,
-            totalRevenue: 0,
-            roomBookingsCount: 0,
-            poolPassesCount: 0
-          };
-        }
-        data.revenueArchive.monthlySummary[monthKey].roomRevenue += rev;
-        data.revenueArchive.monthlySummary[monthKey].totalRevenue += rev;
-        data.revenueArchive.monthlySummary[monthKey].roomBookingsCount += 1;
-      } else {
-        keptBookings.push(b);
-      }
-    });
-
-    const keptPool = [];
-    (data.poolBookings || []).forEach(p => {
-      const pDate = (p.date || p.createdAt || '').split('T')[0];
-      const isOlderThan2Months = pDate < cutoffStr;
-
-      if (isOlderThan2Months) {
-        const rev = Number(p.totalAmount || 0);
-        recycledRevenue += rev;
-        const monthKey = pDate.substring(0, 7);
-
-        if (!data.revenueArchive.monthlySummary[monthKey]) {
-          data.revenueArchive.monthlySummary[monthKey] = {
-            month: monthKey,
-            roomRevenue: 0,
-            poolRevenue: 0,
-            totalRevenue: 0,
-            roomBookingsCount: 0,
-            poolPassesCount: 0
-          };
-        }
-        data.revenueArchive.monthlySummary[monthKey].poolRevenue += rev;
-        data.revenueArchive.monthlySummary[monthKey].totalRevenue += rev;
-        data.revenueArchive.monthlySummary[monthKey].poolPassesCount += 1;
-        data.revenueArchive.historicalPoolPassesCount += 1;
-      } else {
-        keptPool.push(p);
-      }
-    });
-
-    if (recycledRooms > 0 || (data.poolBookings && keptPool.length < data.poolBookings.length)) {
-      data.revenueArchive.historicalTotalRevenue += recycledRevenue;
-      data.revenueArchive.historicalRoomBookingsCount += recycledRooms;
-      data.bookings = keptBookings;
-      data.poolBookings = keptPool;
-      writeDbDirect(data);
-    }
-  },
-
-  // -------------------------------------------------------------
-  // ADMIN APP: WEEKLY, MONTHLY & SPECIFIC DATE COMPREHENSIVE REPORTS
-  // -------------------------------------------------------------
-  getAdminReports: (timeframe = 'month', targetDate = null) => {
-    const data = readDb();
-    
-    // Auto-run 2-month data retention & recycling
-    try {
-      db.recycleOldDataPolicy(data);
-    } catch (e) {
-      console.warn('[Recycle Policy Non-fatal]', e.message);
-    }
-
-    const allBookings = data.bookings || [];
-    const poolBookings = data.poolBookings || [];
-    const archive = data.revenueArchive || {
-      historicalTotalRevenue: 0,
-      historicalRoomBookingsCount: 0,
-      historicalPoolPassesCount: 0,
-      monthlySummary: {}
+    const newPayment = {
+      id: `PAY-${Date.now()}`,
+      amount: pAmount,
+      method: paymentData.paymentMethod || 'Cash',
+      date: new Date().toISOString(),
+      notes: paymentData.notes || ''
     };
+    const newAdvance = (Number(booking.advancePaid) || 0) + pAmount;
+    const newBalance = Math.max(0, Number(booking.totalAmount) - newAdvance);
+
+    return Booking.findOneAndUpdate(
+      { id: bookingId },
+      {
+        $push: { payments: newPayment },
+        advancePaid: newAdvance,
+        remainingBalance: newBalance,
+        paymentStatus: newBalance === 0 ? 'Paid' : 'Partial Advance',
+        updatedAt: new Date().toISOString()
+      },
+      { new: true }
+    ).lean();
+  },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // POOL PASS (Admin App — Walk-in)
+  // ───────────────────────────────────────────────────────────────────────────
+  createPoolPass: async (passData) => {
+    const {
+      phone,
+      guestCount = 1,
+      adultCount = 1,
+      childCount = 0,
+      durationHours = 2,
+      customerName = 'Walk-in Swimmer',
+      customRate,
+      paymentMethod = 'Cash'
+    } = passData;
+
+    if (!phone || !phone.trim()) throw new Error('Guest mobile number is required.');
+
+    const count = await PoolBooking.countDocuments();
+    const passId = `SR-PL-PASS-${new Date().getFullYear()}-${String(count + 101).padStart(4, '0')}`;
+    const settings = await getSettings();
+
+    const adultRate = settings.adultPoolTicket || 350;
+    const childRate = settings.childPoolTicket || 200;
+    const defaultTotal = (Number(adultCount) * adultRate) + (Number(childCount) * childRate);
+    const totalAmount = customRate !== undefined && customRate !== '' ? Number(customRate) : defaultTotal;
 
     const now = new Date();
+    const entryTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const validUntilDate = new Date(now.getTime() + (Number(durationHours) || 2) * 60 * 60 * 1000);
+    const validUntil = validUntilDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+    const newPass = await PoolBooking.create({
+      id: passId,
+      type: 'swimming_pool',
+      bookingSource: 'pool_walkin_app',
+      customerName: customerName ? customerName.trim() : 'Guest Swimmer',
+      phone: phone.trim(),
+      date: now.toISOString().split('T')[0],
+      entryTime,
+      slot: entryTime,
+      durationHours: Number(durationHours) || 2,
+      validUntil,
+      adultCount: Number(adultCount),
+      childCount: Number(childCount),
+      totalVisitors: Number(guestCount) || (Number(adultCount) + Number(childCount)),
+      totalAmount,
+      paymentStatus: 'Paid',
+      paymentMethod: paymentMethod || 'Cash',
+      status: 'Active',
+      createdAt: now.toISOString()
+    });
+
+    return newPass.toObject();
+  },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // ADMIN REPORTS (5 KPIs + Today Ledger)
+  // ───────────────────────────────────────────────────────────────────────────
+  getAdminReports: async (timeframe = 'today', targetDate = null) => {
+    const now = new Date();
     const todayStr = now.toISOString().split('T')[0];
-    const currentMonthKey = todayStr.substring(0, 7); // e.g. '2026-11'
+    const currentMonthKey = todayStr.substring(0, 7);
 
-    // Exclude cancelled bookings for calculations
-    const validAllBookings = allBookings.filter(b => b.status !== BOOKING_STATUS.CANCELLED);
-    const validPoolBookings = poolBookings.filter(p => p.status !== BOOKING_STATUS.CANCELLED);
+    const [allBookings, allPoolBookings, archive] = await Promise.all([
+      Booking.find({ status: { $ne: BOOKING_STATUS.CANCELLED } }).lean(),
+      PoolBooking.find({ status: { $ne: BOOKING_STATUS.CANCELLED } }).lean(),
+      getArchive()
+    ]);
 
-    // =============================================================
-    // 5 PRIMARY AUDIT METRICS REQUESTED BY MANAGEMENT
-    // =============================================================
-
-    // 1. Total Room Booking Till Date (Grand all-time lifetime count)
-    const totalRoomBookingTillDate = (archive.historicalRoomBookingsCount || 0) + validAllBookings.length;
-
-    // 2. Today Room Booking Count (Created or checked-in today)
-    const todayRoomBookingCount = validAllBookings.filter(b => {
-      const createdDate = (b.createdAt || '').split('T')[0];
-      const checkInDate = (b.checkIn || '').split('T')[0];
-      return createdDate === todayStr || checkInDate === todayStr;
-    }).length;
-
-    // Monthly Room Bookings Count (rooms booked or checked-in this month)
-    const monthlyRoomBookingsCount = validAllBookings.filter(b => {
-      const createdDate = (b.createdAt || '').split('T')[0];
-      const checkInDate = (b.checkIn || '').split('T')[0];
-      return (createdDate.substring(0, 7) === currentMonthKey) || (checkInDate.substring(0, 7) === currentMonthKey);
-    }).length;
-
-    // Helper: Calculate revenue settled for a single booking
-    const getBookingSettledRevenue = (b) => {
-      if (b.payments && b.payments.length > 0) {
-        return b.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-      }
-      if (b.status === 'Checked-Out' || b.status === 'Completed') {
-        return Number(b.totalAmount || b.advancePaid || 0);
-      }
+    const getBookingRev = (b) => {
+      if (b.payments && b.payments.length > 0) return b.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      if (b.status === 'Checked-Out' || b.status === 'Completed') return Number(b.totalAmount || b.advancePaid || 0);
       return Number(b.advancePaid !== undefined && b.advancePaid !== '' ? b.advancePaid : b.totalAmount) || 0;
     };
 
-    // 3. Today Revenue (Room payments/checkouts today + today pool passes)
+    // ── KPI 1: Today bookings
+    const todayRoomBookingCount = allBookings.filter(b => {
+      const ci = (b.checkIn || '').split('T')[0];
+      const cr = (b.createdAt || '').split('T')[0];
+      return ci === todayStr || cr === todayStr;
+    }).length;
+
+    // ── KPI 2: Today revenue
     let todayRoomRevenue = 0;
-    validAllBookings.forEach(b => {
+    allBookings.forEach(b => {
       if (b.payments && b.payments.length > 0) {
-        b.payments.forEach(p => {
-          if ((p.date || '').split('T')[0] === todayStr) {
-            todayRoomRevenue += Number(p.amount) || 0;
-          }
-        });
+        b.payments.forEach(p => { if ((p.date || '').split('T')[0] === todayStr) todayRoomRevenue += Number(p.amount) || 0; });
       } else {
         const bDate = (b.actualCheckOut || b.createdAt || b.checkIn || '').split('T')[0];
-        if (bDate === todayStr) {
-          todayRoomRevenue += getBookingSettledRevenue(b);
-        }
+        if (bDate === todayStr) todayRoomRevenue += getBookingRev(b);
       }
     });
 
     let todayPoolRevenue = 0;
-    validPoolBookings.forEach(p => {
-      const pDate = (p.date || p.createdAt || '').split('T')[0];
-      if (pDate === todayStr) {
-        todayPoolRevenue += Number(p.totalAmount || 0);
-      }
+    allPoolBookings.forEach(p => {
+      if ((p.date || p.createdAt || '').split('T')[0] === todayStr) todayPoolRevenue += Number(p.totalAmount || 0);
     });
+
     const todayRevenue = todayRoomRevenue + todayPoolRevenue;
 
-    // 4. Monthly Revenue (Current calendar month: YYYY-MM)
+    // ── KPI 3: Monthly bookings count
+    const monthlyRoomBookingsCount = allBookings.filter(b => {
+      const ci = (b.checkIn || '').substring(0, 7);
+      const cr = (b.createdAt || '').substring(0, 7);
+      return ci === currentMonthKey || cr === currentMonthKey;
+    }).length;
+
+    // ── KPI 4: Monthly revenue
     let monthlyRoomRevenue = Number(archive.monthlySummary?.[currentMonthKey]?.roomRevenue || 0);
-    validAllBookings.forEach(b => {
+    allBookings.forEach(b => {
       if (b.payments && b.payments.length > 0) {
-        b.payments.forEach(p => {
-          if ((p.date || '').substring(0, 7) === currentMonthKey) {
-            monthlyRoomRevenue += Number(p.amount) || 0;
-          }
-        });
+        b.payments.forEach(p => { if ((p.date || '').substring(0, 7) === currentMonthKey) monthlyRoomRevenue += Number(p.amount) || 0; });
       } else {
         const bDate = (b.actualCheckOut || b.createdAt || b.checkIn || '').split('T')[0];
-        if (bDate.substring(0, 7) === currentMonthKey) {
-          monthlyRoomRevenue += getBookingSettledRevenue(b);
-        }
+        if (bDate.substring(0, 7) === currentMonthKey) monthlyRoomRevenue += getBookingRev(b);
       }
     });
 
     let monthlyPoolRevenue = Number(archive.monthlySummary?.[currentMonthKey]?.poolRevenue || 0);
-    validPoolBookings.forEach(p => {
-      const pDate = (p.date || p.createdAt || '').split('T')[0];
-      if (pDate.substring(0, 7) === currentMonthKey) {
-        monthlyPoolRevenue += Number(p.totalAmount || 0);
-      }
+    allPoolBookings.forEach(p => {
+      if ((p.date || p.createdAt || '').split('T')[0].substring(0, 7) === currentMonthKey) monthlyPoolRevenue += Number(p.totalAmount || 0);
     });
     const monthlyRevenue = monthlyRoomRevenue + monthlyPoolRevenue;
 
-    // 5. Till Now Revenue (Grand all-time lifetime revenue collected till date - NEVER RESETS)
-    let allTimeRoomRevenue = 0;
-    validAllBookings.forEach(b => {
-      allTimeRoomRevenue += getBookingSettledRevenue(b);
-    });
+    // ── KPI 5: Lifetime revenue
+    let allTimeRoomRev = 0, allTimePoolRev = 0;
+    allBookings.forEach(b => { allTimeRoomRev += getBookingRev(b); });
+    allPoolBookings.forEach(p => { allTimePoolRev += Number(p.totalAmount || 0); });
+    const tillNowRevenue = (archive.historicalTotalRevenue || 0) + allTimeRoomRev + allTimePoolRev;
 
-    let allTimePoolRevenue = 0;
-    validPoolBookings.forEach(p => {
-      allTimePoolRevenue += Number(p.totalAmount || 0);
-    });
+    // ── Today's ledger (rooms + pool for today, sorted by check-in time)
+    const activeDateStr = targetDate || todayStr;
 
-    const tillNowRevenue = (archive.historicalTotalRevenue || 0) + allTimeRoomRevenue + allTimePoolRevenue;
-
-    // =============================================================
-    // TIMEFRAME-SPECIFIC FILTERING (For Charts & Breakdowns)
-    // =============================================================
-    let daysToLookBack = 30;
-    if (timeframe === 'today') daysToLookBack = 1;
-    else if (timeframe === 'week') daysToLookBack = 7;
-    else if (timeframe === 'month') daysToLookBack = 30;
-    else if (timeframe === 'year') daysToLookBack = 365;
-
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - (daysToLookBack - 1));
-    const cutoffStr = cutoffDate.toISOString().split('T')[0];
-
-    // Filter room bookings whose checkIn, createdAt, or actualCheckOut falls within the timeframe
-    const filteredRoomBookings = validAllBookings.filter(b => {
-      const createdDate = (b.createdAt || '').split('T')[0];
-      const checkInDate = (b.checkIn || '').split('T')[0];
-      const checkoutDate = (b.actualCheckOut || b.checkOut || '').split('T')[0];
-      return createdDate >= cutoffStr || checkInDate >= cutoffStr || checkoutDate >= cutoffStr;
-    });
-
-    const filteredPoolBookings = validPoolBookings.filter(p => {
-      const pDate = (p.createdAt || p.date || '').split('T')[0];
-      return pDate >= cutoffStr;
-    });
-
-    let timeframeRoomRevenue = 0;
-    let timeframePoolRevenue = 0;
-    let cashRevenue = 0;
-    let upiRevenue = 0;
-    let cardRevenue = 0;
-
-    filteredRoomBookings.forEach(b => {
-      const rev = getBookingSettledRevenue(b);
-      timeframeRoomRevenue += rev;
-      const method = (b.paymentMethod || 'Cash').toLowerCase();
-      if (method.includes('upi') || method.includes('gpay') || method.includes('phonepe')) upiRevenue += rev;
-      else if (method.includes('card')) cardRevenue += rev;
-      else cashRevenue += rev;
-    });
-
-    filteredPoolBookings.forEach(p => {
-      const rev = Number(p.totalAmount) || 0;
-      timeframePoolRevenue += rev;
-      const method = (p.paymentMethod || 'Cash').toLowerCase();
-      if (method.includes('upi') || method.includes('gpay') || method.includes('phonepe')) upiRevenue += rev;
-      else if (method.includes('card')) cardRevenue += rev;
-      else cashRevenue += rev;
-    });
-
-    const timeframeTotalRevenue = timeframeRoomRevenue + timeframePoolRevenue;
-    const totalEntries = filteredRoomBookings.length + filteredPoolBookings.length;
-
-    // Daily breakdown for visual graphs / trends
-    const dailyBreakdown = [];
-    for (let i = daysToLookBack - 1; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dStr = d.toISOString().split('T')[0];
-      const dayLabel = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-
-      let dayRoomRev = 0;
-      let dayPoolRev = 0;
-      let dayEntries = 0;
-      let dayRoomsBooked = 0;
-
-      filteredRoomBookings.forEach(b => {
-        const inDate = (b.checkIn || '').split('T')[0];
-        const createDate = (b.createdAt || '').split('T')[0];
-        const outDate = (b.actualCheckOut || b.checkOut || '').split('T')[0];
-        if (createDate === dStr || inDate === dStr || outDate === dStr) {
-          const rev = getBookingSettledRevenue(b);
-          dayRoomRev += rev;
-          dayEntries++;
-          dayRoomsBooked++;
-        }
-      });
-
-      filteredPoolBookings.forEach(p => {
-        const pDate = (p.createdAt || p.date || '').split('T')[0];
-        if (pDate === dStr) {
-          dayPoolRev += Number(p.totalAmount) || 0;
-          dayEntries++;
-        }
-      });
-
-      dailyBreakdown.push({
-        date: dStr,
-        label: dayLabel,
-        roomRevenue: dayRoomRev,
-        poolRevenue: dayPoolRev,
-        totalRevenue: dayRoomRev + dayPoolRev,
-        entriesCount: dayEntries,
-        roomsBookedCount: dayRoomsBooked
-      });
-    }
-
-    // Specific Date Query: On which date how many rooms booked and for how much
-    const activeDateFilter = targetDate || todayStr;
-    const dateRoomBookings = validAllBookings.filter(b => {
+    const todayRoomBookings = allBookings.filter(b => {
       const inDate = (b.checkIn || '').split('T')[0];
       const outDate = (b.actualCheckOut || b.checkOut || inDate).split('T')[0];
       const createDate = (b.createdAt || '').split('T')[0];
-      return (activeDateFilter >= inDate && activeDateFilter <= outDate) || 
-             createDate === activeDateFilter || 
-             (b.actualCheckOut && b.actualCheckOut === activeDateFilter);
+      return (activeDateStr >= inDate && activeDateStr <= outDate) || createDate === activeDateStr || (b.actualCheckOut && b.actualCheckOut === activeDateStr);
     });
 
-    const datePoolBookings = validPoolBookings.filter(p => {
-      const pDate = (p.date || p.createdAt || '').split('T')[0];
-      return pDate === activeDateFilter;
+    const todayPoolBookings = allPoolBookings.filter(p => {
+      return (p.date || p.createdAt || '').split('T')[0] === activeDateStr;
     });
 
-    let dateRoomRevTotal = 0;
-    const roomsListForDate = dateRoomBookings.map(b => {
-      const rev = getBookingSettledRevenue(b);
-      dateRoomRevTotal += rev;
-      return {
+    const dateReport = {
+      date: activeDateStr,
+      roomsBookedCount: todayRoomBookings.length,
+      poolPassesCount: todayPoolBookings.length,
+      roomRevenue: todayRoomBookings.reduce((s, b) => s + getBookingRev(b), 0),
+      poolRevenue: todayPoolBookings.reduce((s, p) => s + Number(p.totalAmount || 0), 0),
+      totalRevenue: 0,
+      roomsBooked: todayRoomBookings.map(b => ({
         id: b.id,
         roomNumber: b.roomNumber,
         roomName: b.roomName,
@@ -1668,7 +926,7 @@ const db = {
         secondGuestName: b.secondGuestName || null,
         secondGuestAge: b.secondGuestAge || null,
         secondGuestAadhaar: b.secondGuestAadhaar || null,
-        amountBookedFor: rev,
+        amountBookedFor: getBookingRev(b),
         totalAmount: b.totalAmount,
         advancePaid: b.advancePaid,
         remainingBalance: b.remainingBalance || 0,
@@ -1681,77 +939,13 @@ const db = {
         paymentStatus: b.paymentStatus || 'Paid',
         paymentMethod: b.paymentMethod || 'Cash',
         status: b.status
-      };
-    });
-
-    let datePoolRevTotal = 0;
-    datePoolBookings.forEach(p => { datePoolRevTotal += Number(p.totalAmount || 0); });
-
-    const dateReport = {
-      date: activeDateFilter,
-      roomsBookedCount: roomsListForDate.length,
-      roomRevenue: dateRoomRevTotal,
-      poolPassesCount: datePoolBookings.length,
-      poolRevenue: datePoolRevTotal,
-      totalRevenue: dateRoomRevTotal + datePoolRevTotal,
-      roomsBooked: roomsListForDate
+      }))
     };
+    dateReport.totalRevenue = dateReport.roomRevenue + dateReport.poolRevenue;
 
-    // Monthly Revenue History (Retains monthly history even after 2-month recycling)
-    const monthlyMap = { ...archive.monthlySummary };
-    validAllBookings.forEach(b => {
-      const bDate = (b.actualCheckOut || b.createdAt || b.checkIn || '').split('T')[0];
-      const monthKey = bDate.substring(0, 7);
-      if (!monthlyMap[monthKey]) {
-        monthlyMap[monthKey] = {
-          month: monthKey,
-          roomRevenue: 0,
-          poolRevenue: 0,
-          totalRevenue: 0,
-          roomBookingsCount: 0,
-          poolPassesCount: 0
-        };
-      }
-      const rev = getBookingSettledRevenue(b);
-      monthlyMap[monthKey].roomRevenue += rev;
-      monthlyMap[monthKey].totalRevenue += rev;
-      monthlyMap[monthKey].roomBookingsCount += 1;
-    });
-
-    validPoolBookings.forEach(p => {
-      const pDate = (p.date || p.createdAt || '').split('T')[0];
-      const monthKey = pDate.substring(0, 7);
-      if (!monthlyMap[monthKey]) {
-        monthlyMap[monthKey] = {
-          month: monthKey,
-          roomRevenue: 0,
-          poolRevenue: 0,
-          totalRevenue: 0,
-          roomBookingsCount: 0,
-          poolPassesCount: 0
-        };
-      }
-      const rev = Number(p.totalAmount || 0);
-      monthlyMap[monthKey].poolRevenue += rev;
-      monthlyMap[monthKey].totalRevenue += rev;
-      monthlyMap[monthKey].poolPassesCount += 1;
-    });
-
-    const monthlyHistory = Object.values(monthlyMap)
-      .sort((a, b) => b.month.localeCompare(a.month))
-      .map(m => {
-        const [y, mon] = m.month.split('-');
-        const dateObj = new Date(Number(y), Number(mon) - 1, 1);
-        const label = dateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-        return {
-          ...m,
-          label
-        };
-      });
-
-    // Complete Unified Transactions Ledger (Includes Checked-In & Checked-Out - Never vanished)
+    // ── Combined transactions for ledger
     const combinedTransactions = [
-      ...validAllBookings.map(b => ({
+      ...allBookings.map(b => ({
         id: b.id,
         type: 'Room Booking',
         item: `Room ${b.roomNumber} (${b.category || 'Deluxe'})`,
@@ -1762,7 +956,7 @@ const db = {
         secondGuestAge: b.secondGuestAge || null,
         secondGuestAadhaar: b.secondGuestAadhaar || null,
         aadhaarNumber: b.aadhaarNumber || null,
-        amount: getBookingSettledRevenue(b),
+        amount: getBookingRev(b),
         totalAmount: b.totalAmount,
         advancePaid: b.advancePaid,
         remainingBalance: b.remainingBalance || 0,
@@ -1775,20 +969,15 @@ const db = {
         actualCheckOut: b.actualCheckOut || null,
         actualCheckOutTime: b.actualCheckOutTime || null,
         timestamp: b.actualCheckOut || b.createdAt || b.checkIn,
-        status: b.status,
-        source: b.bookingSource || 'on_spot'
+        status: b.status
       })),
-      ...validPoolBookings.map(p => ({
+      ...allPoolBookings.map(p => ({
         id: p.id,
         type: 'Swimming Pool',
-        item: `Pool Pass (${p.totalVisitors || p.adultCount} Guests, ${p.durationHours || 2}h)`,
+        item: `Pool Pass (${p.totalVisitors || p.adultCount} Guests)`,
         customerName: p.customerName || 'Walk-in Swimmer',
         phone: p.phone,
         stayType: 'Pool',
-        secondGuestName: null,
-        secondGuestAge: null,
-        secondGuestAadhaar: null,
-        aadhaarNumber: null,
         amount: Number(p.totalAmount),
         totalAmount: Number(p.totalAmount),
         advancePaid: Number(p.totalAmount),
@@ -1796,47 +985,78 @@ const db = {
         paymentMethod: p.paymentMethod || 'Cash',
         paymentStatus: p.paymentStatus || 'Paid',
         checkIn: p.date,
-        checkInTime: p.slot || '10:00 AM',
+        checkInTime: p.entryTime || p.slot || '10:00 AM',
         checkOut: p.date,
-        checkOutTime: '',
         actualCheckOut: null,
-        actualCheckOutTime: null,
         timestamp: p.createdAt || p.date,
-        status: p.status || 'Active',
-        source: 'pool_walkin'
+        status: p.status || 'Active'
       }))
     ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
     return {
       timeframe,
       summary: {
-        // 5 Primary Key Management Metrics
-        totalRoomBookingTillDate,
+        totalRoomBookingTillDate: (archive.historicalRoomBookingsCount || 0) + allBookings.length,
         todayRoomBookingCount,
         todayRevenue,
         todayPoolRevenue,
         monthlyRevenue,
         monthlyRoomBookingsCount,
         tillNowRevenue,
-        // Additional Analytics
-        timeframeTotalRevenue,
-        roomRevenue: timeframeRoomRevenue,
-        poolRevenue: timeframePoolRevenue,
-        totalEntries,
-        roomBookingsCount: filteredRoomBookings.length,
-        poolPassesCount: filteredPoolBookings.length,
-        cashRevenue,
-        upiRevenue,
-        cardRevenue,
-        historicalArchivedRevenue: archive.historicalTotalRevenue || 0,
-        retentionPolicy: '60 Days (2 Months) Data Recycling Active'
+        poolRevenue: todayPoolRevenue,
+        roomRevenue: todayRoomRevenue,
+        totalEntries: allBookings.length + allPoolBookings.length,
+        roomBookingsCount: allBookings.length,
+        poolPassesCount: allPoolBookings.length
       },
-      dailyBreakdown,
       dateReport,
-      monthlyHistory,
       recentTransactions: combinedTransactions.slice(0, 100)
     };
-  }
+  },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // AUTH / ADMIN USERS (Still using local JSON for auth — simple approach)
+  // ───────────────────────────────────────────────────────────────────────────
+  getAdmins: () => {
+    try {
+      const fs = require('fs'), path = require('path');
+      const dbFile = path.join(__dirname, 'data.json');
+      if (!fs.existsSync(dbFile)) return [];
+      const data = JSON.parse(fs.readFileSync(dbFile, 'utf-8'));
+      return data.admins || [];
+    } catch (e) { return []; }
+  },
+
+  getAdminByUsername: (username) => {
+    return db.getAdmins().find(a => a.username === username);
+  },
+
+  createAdmin: async (adminData) => {
+    const fs = require('fs'), path = require('path');
+    const dbFile = path.join(__dirname, 'data.json');
+    let data = {};
+    try { data = JSON.parse(fs.readFileSync(dbFile, 'utf-8')); } catch (e) { data = { admins: [] }; }
+    if (!data.admins) data.admins = [];
+    data.admins.push({ ...adminData, createdAt: new Date().toISOString() });
+    fs.writeFileSync(dbFile, JSON.stringify(data, null, 2));
+    return adminData;
+  },
+
+  // Legacy stubs (not used but kept for compatibility)
+  createBanquetBooking: async (d) => ({ id: 'SR-BQ-STUB', ...d }),
+  getBanquetBookings: async () => [],
+  createLawnBooking: async (d) => ({ id: 'SR-LW-STUB', ...d }),
+  getLawnBookings: async () => [],
+  getPackages: async () => [],
+  getPackageById: async () => null,
+  updatePackage: async () => null,
+  createPackageBooking: async (d) => ({ id: 'SR-PK-STUB', ...d }),
+  getPackageBookings: async () => [],
+  createInquiry: async (d) => ({ id: 'INQ-STUB', ...d }),
+  getInquiries: async () => [],
+  getReviews: async () => [],
+  recycleOldDataPolicy: async () => {},
+  getData: async () => ({})
 };
 
 module.exports = db;
