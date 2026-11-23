@@ -9,16 +9,16 @@ console.log('URI target: cluster0.jrhvtpn.mongodb.net/sadguru_resort');
 mongoose.connect(uri, {
   serverSelectionTimeoutMS: 8000
 })
-.then(() => {
-  console.log('SUCCESS: Successfully connected to MongoDB Atlas!');
-  console.log('Database name:', mongoose.connection.name);
-  return mongoose.connection.db.admin().listDatabases();
-})
-.then((dbs) => {
-  console.log('Available databases:', dbs.databases.map(d => d.name).join(', '));
-  process.exit(0);
-})
-.catch((err) => {
-  console.error('ERROR connecting to MongoDB Atlas:', err.message);
-  process.exit(1);
-});
+  .then(() => {
+    console.log('SUCCESS: Successfully connected to MongoDB Atlas!');
+    console.log('Database name:', mongoose.connection.name);
+    return mongoose.connection.db.admin().listDatabases();
+  })
+  .then((dbs) => {
+    console.log('Available databases:', dbs.databases.map(d => d.name).join(', '));
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error('ERROR connecting to MongoDB Atlas:', err.message);
+    process.exit(1);
+  });

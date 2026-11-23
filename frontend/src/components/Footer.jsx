@@ -10,9 +10,9 @@ export default function Footer({ onOpenTrack, onOpenBooking }) {
   return (
     <footer className="bg-resort-oliveDeep text-resort-cream pt-20 pb-10 border-t border-resort-gold/20 relative">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-10 pb-16 border-b border-white/10">
-          
+
           {/* Brand Column (2 cols) */}
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center space-x-3.5">
@@ -115,7 +115,7 @@ export default function Footer({ onOpenTrack, onOpenBooking }) {
         {/* Bottom copyright & back to top */}
         <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-gray-400">
           <p>© {new Date().getFullYear()} Sadguru Resort. All rights reserved. A Premium Hospitality Experience.</p>
-          
+
           <button
             onClick={scrollToTop}
             className="flex items-center gap-1.5 text-resort-gold hover:text-white transition-colors"

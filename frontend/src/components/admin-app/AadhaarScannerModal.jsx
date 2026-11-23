@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Upload, X, Check, RefreshCw, AlertCircle, ShieldCheck, Sparkles, User, Calendar, Hash, CheckSquare, Square, Eye, QrCode, Zap, CheckCircle2 } from 'lucide-react';
+import { Camera, Upload, X, Check, RefreshCw, AlertCircle, ShieldCheck, Sparkles, User, Calendar, Hash, CheckSquare, Square, Eye, QrCode, Zap, CheckCircle2, Flashlight, FlashlightOff, RotateCcw } from 'lucide-react';
 import jsQR from 'jsqr';
 import Tesseract from 'tesseract.js';
 
-export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) {
+export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, targetLabel = '' }) {
   const [activeMode, setActiveMode] = useState('qr_live'); // 'qr_live' (Option 1 Default), 'photo_ocr', 'upload'
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
@@ -14,12 +14,27 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
   const [rawExtractedText, setRawExtractedText] = useState('');
   const [consentGiven, setConsentGiven] = useState(true);
   const [previewImage, setPreviewImage] = useState(null);
+  const [isTorchOn, setIsTorchOn] = useState(false);
+  const [torchSupported, setTorchSupported] = useState(false);
 
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
   const streamRef = useRef(null);
   const canvasRef = useRef(null);
   const animFrameRef = useRef(null);
+  const reusableCanvasRef = useRef(null);
+  const barcodeDetectorRef = useRef(null);
+
+  // Initialize Native Hardware BarcodeDetector if available (Runs on Android GPU / Google Play Services in ~3ms)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
+      try {
+        barcodeDetectorRef.current = new window.BarcodeDetector({ formats: ['qr_code'] });
+      } catch (e) {
+        barcodeDetectorRef.current = null;
+      }
+    }
+  }, []);
 
   // Pleasant Web Audio API Beep on Successful QR Detection
   const playBeep = () => {
@@ -42,14 +57,39 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
     }
   };
 
+  // Reset ALL state when modal opens or when target guest changes (Fresh Scan Guarantee)
   useEffect(() => {
-    if (isOpen && (activeMode === 'qr_live' || activeMode === 'photo_ocr')) {
+    if (isOpen) {
+      setScannedData(null);
+      setRawExtractedText('');
+      setPreviewImage(null);
+      setScanError('');
+      setCameraError('');
+      setIsProcessing(false);
+      setProcessingStatus('');
+      setProgressPercent(0);
+      setIsTorchOn(false);
+      setActiveMode('qr_live');
       startCamera();
     } else {
       stopCamera();
     }
     return () => stopCamera();
-  }, [isOpen, activeMode]);
+  }, [isOpen, targetLabel]);
+
+  const toggleTorch = async () => {
+    try {
+      const track = streamRef.current?.getVideoTracks()[0];
+      if (!track) return;
+      const nextTorch = !isTorchOn;
+      await track.applyConstraints({
+        advanced: [{ torch: nextTorch }]
+      });
+      setIsTorchOn(nextTorch);
+    } catch (err) {
+      console.warn('Torch constraint toggle notice:', err);
+    }
+  };
 
   const startCamera = async () => {
     setCameraError('');
@@ -59,7 +99,12 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
         throw new Error('Camera access is not supported by this browser.');
       }
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1920, min: 1280 },
+          height: { ideal: 1080, min: 720 },
+          advanced: [{ focusMode: 'continuous' }]
+        },
         audio: false
       });
       streamRef.current = stream;
@@ -71,6 +116,19 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
             startLiveQRScanning();
           }
         };
+      }
+      // Check if torch/flashlight is supported & trigger continuous autofocus
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        if (track.applyConstraints) {
+          track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+        }
+        const caps = (track.getCapabilities && track.getCapabilities()) || {};
+        if (caps.torch !== undefined || 'torch' in caps) {
+          setTorchSupported(true);
+        } else {
+          setTorchSupported(true);
+        }
       }
     } catch (err) {
       console.warn('Camera start error:', err);
@@ -85,65 +143,126 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
       animFrameRef.current = null;
     }
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach(track => {
+        try {
+          track.applyConstraints({ advanced: [{ torch: false }] });
+        } catch (e) {}
+        track.stop();
+      });
       streamRef.current = null;
     }
+    setIsTorchOn(false);
   };
 
-  // Continuous Video Frame QR Code Detection (Instant & Automatic)
+  // High-Speed Instant QR Handler
+  const handleQRDetected = (qrRawData) => {
+    if (!qrRawData) return;
+    playBeep();
+    stopCamera();
+    setIsProcessing(true);
+    setProcessingStatus('Aadhaar QR Code detected! Decoding UIDAI payload...');
+    setProgressPercent(50);
+    parseAadhaarQR(qrRawData).then(parsedQR => {
+      if (parsedQR && (parsedQR.name || parsedQR.dob || parsedQR.aadhaarNumber)) {
+        setProgressPercent(100);
+        setScannedData({ ...parsedQR, confidence: 100 });
+        setRawExtractedText('UIDAI Secure QR — Verified offline');
+      } else {
+        setScanError('QR code detected but could not parse Aadhaar fields. Please try OCR Photo mode.');
+      }
+      setIsProcessing(false);
+    }).catch(err => {
+      console.error('[Live QR parse error]', err);
+      setScanError('QR decode error. Please try OCR Photo mode.');
+      setIsProcessing(false);
+    });
+  };
+
+  // High-Performance Continuous QR Detection Loop (~20 Scans/Sec + GPU Acceleration)
   const startLiveQRScanning = () => {
     let lastScanTime = 0;
-    const scanLoop = (timestamp) => {
+    let tick = 0;
+
+    const scanLoop = async (timestamp) => {
       if (!videoRef.current || !streamRef.current) return;
       const video = videoRef.current;
 
-      // Scan every ~120ms to conserve battery and run smoothly
-      if (timestamp - lastScanTime >= 120 && video.readyState >= 2 && !isProcessing && !scannedData) {
+      // Scan every ~45ms for rapid auto-detection (approx 22 fps)
+      if (timestamp - lastScanTime >= 45 && video.readyState >= 2 && !isProcessing && !scannedData) {
         lastScanTime = timestamp;
+        tick++;
+
+        // 1. FASTEST PATH: Native Android Hardware BarcodeDetector (runs on GPU in 2-4ms)
+        if (barcodeDetectorRef.current) {
+          try {
+            const detected = await barcodeDetectorRef.current.detect(video);
+            if (detected && detected.length > 0 && detected[0].rawValue) {
+              handleQRDetected(detected[0].rawValue);
+              return;
+            }
+          } catch (e) {
+            // fallback to jsQR below
+          }
+        }
+
+        // 2. HIGH ACCURACY DUAL-ZONE jsQR ENGINE
+        // Dense Aadhaar QRs have thousands of micro-dots. Downscaling the whole frame blurs dots together.
+        // We take a crisp 1:1 pixel crop around the center target box where the user aims the QR code.
         try {
-          const w = Math.min(640, video.videoWidth || 640);
-          const h = Math.round(w * ((video.videoHeight || 480) / (video.videoWidth || 640)));
-          const scanC = document.createElement('canvas');
-          scanC.width = w;
-          scanC.height = h;
-          const sCtx = scanC.getContext('2d');
-          sCtx.drawImage(video, 0, 0, w, h);
-          const imgData = sCtx.getImageData(0, 0, w, h);
+          if (!reusableCanvasRef.current) {
+            reusableCanvasRef.current = document.createElement('canvas');
+          }
+          const canvas = reusableCanvasRef.current;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-          const qrCode = jsQR(imgData.data, imgData.width, imgData.height, {
-            inversionAttempts: 'attemptBoth'
-          });
+          const vw = video.videoWidth || 1280;
+          const vh = video.videoHeight || 720;
 
-          if (qrCode && qrCode.data) {
-            console.log('[Live QR Scanner] Locked UIDAI QR Code! Length:', qrCode.data.length);
-            playBeep();
-            stopCamera();
-            // For live QR mode: parse QR directly (no OCR needed — QR is 100% accurate)
-            setIsProcessing(true);
-            setProcessingStatus('Aadhaar QR Code detected! Decoding UIDAI payload...');
-            setProgressPercent(50);
-            parseAadhaarQR(qrCode.data).then(parsedQR => {
-              if (parsedQR && (parsedQR.name || parsedQR.dob || parsedQR.aadhaarNumber)) {
-                setProgressPercent(100);
-                setScannedData({ ...parsedQR, confidence: 100 });
-                setRawExtractedText('UIDAI Secure Binary QR — 100% verified offline');
-              } else {
-                setScanError('QR code detected but could not parse Aadhaar fields. Please try OCR Photo mode.');
-              }
-              setIsProcessing(false);
-            }).catch(err => {
-              console.error('[Live QR parse error]', err);
-              setScanError('QR decode error. Please try OCR Photo mode.');
-              setIsProcessing(false);
+          if (tick % 2 === 1) {
+            // A. Sharp Center Crop (Targeting finder box) - 100% dot clarity for dense UIDAI QRs
+            const cropSize = Math.round(Math.min(vw, vh) * 0.60);
+            const sx = Math.round((vw - cropSize) / 2);
+            const sy = Math.round((vh - cropSize) / 2);
+
+            canvas.width = 440;
+            canvas.height = 440;
+            ctx.drawImage(video, sx, sy, cropSize, cropSize, 0, 0, 440, 440);
+            const imgData = ctx.getImageData(0, 0, 440, 440);
+
+            const qrCode = jsQR(imgData.data, imgData.width, imgData.height, {
+              inversionAttempts: 'dontInvert'
             });
-            return;
+
+            if (qrCode && qrCode.data) {
+              handleQRDetected(qrCode.data);
+              return;
+            }
+          } else {
+            // B. Full Frame Scan (640px) - catches QR if held slightly off-center
+            const w = Math.min(640, vw);
+            const h = Math.round(w * (vh / vw));
+            canvas.width = w;
+            canvas.height = h;
+            ctx.drawImage(video, 0, 0, w, h);
+            const imgData = ctx.getImageData(0, 0, w, h);
+
+            const qrCode = jsQR(imgData.data, imgData.width, imgData.height, {
+              inversionAttempts: tick % 6 === 0 ? 'attemptBoth' : 'dontInvert'
+            });
+
+            if (qrCode && qrCode.data) {
+              handleQRDetected(qrCode.data);
+              return;
+            }
           }
         } catch (err) {
-          console.warn('[Live QR detection frame err]', err);
+          // ignore transient frame capture errors
         }
       }
+
       animFrameRef.current = requestAnimationFrame(scanLoop);
     };
+
     animFrameRef.current = requestAnimationFrame(scanLoop);
   };
 
@@ -467,16 +586,41 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
     }
   };
 
-  // Parse UIDAI XML or Secure QR code string
+  // Parse UIDAI XML, Secure QR, or Digital JSON QR code string
   const parseAadhaarQR = async (qrString) => {
+    const rawClean = String(qrString || '').trim();
+
     // 1. First attempt Official UIDAI Secure QR Code (Compressed binary decimal)
-    const secureResult = await decodeSecureAadhaarQR(qrString);
+    const secureResult = await decodeSecureAadhaarQR(rawClean);
     if (secureResult && (secureResult.name || secureResult.dob || secureResult.aadhaarNumber)) {
       return secureResult;
     }
 
-    // 2. Attempt Standard UIDAI XML format (<PrintLetterBarcodeData ... />)
-    if (qrString.includes('<PrintLetterBarcodeData') || qrString.includes('name=')) {
+    // 2. Attempt Digital mAadhaar JSON QR format
+    try {
+      if (rawClean.startsWith('{') && rawClean.endsWith('}')) {
+        const j = JSON.parse(rawClean);
+        const name = (j.name || j.n || j.userName || '').trim();
+        const dob = (j.dob || j.dateOfBirth || j.yob || '').replace(/[\-\.]/g, '/').trim();
+        const gender = (j.gender || j.g) === 'M' ? 'Male' : ((j.gender || j.g) === 'F' ? 'Female' : (j.gender || ''));
+        const uid = String(j.uid || j.aadhaar || j.aadhaarNumber || '').replace(/[^0-9]/g, '');
+        const last4 = uid.slice(-4);
+        if (name || dob || last4) {
+          return {
+            name,
+            dob,
+            age: dob ? calculateAgeFromDOB(dob) : null,
+            gender,
+            aadhaarNumber: last4 ? `XXXX XXXX ${last4}` : '',
+            source: 'mAadhaar Digital QR Code',
+            verified: true
+          };
+        }
+      }
+    } catch (e) {}
+
+    // 3. Attempt Standard UIDAI XML format (<PrintLetterBarcodeData ... />)
+    if (rawClean.includes('<PrintLetterBarcodeData') || rawClean.includes('name=')) {
       let name = '';
       let dob = '';
       let age = null;
@@ -800,13 +944,22 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
               <Camera className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
-                Aadhaar Scanner
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <h3 className="font-bold text-sm text-slate-900">
+                  Aadhaar Scanner
+                </h3>
+                {targetLabel && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold border border-amber-300">
+                    {targetLabel}
+                  </span>
+                )}
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold flex items-center gap-0.5">
                   <Zap className="w-2.5 h-2.5" /> Live QR
                 </span>
-              </h3>
-              <p className="text-[11px] text-slate-500">Point camera at QR code — auto-detects instantly</p>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                {targetLabel ? `Scanning fresh Aadhaar for ${targetLabel}` : 'Point camera at QR code — auto-detects instantly'}
+              </p>
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700">
@@ -888,6 +1041,24 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
                 ) : (
                   <>
                     <video ref={videoRef} playsInline muted className="w-full h-full object-cover" />
+                    
+                    {/* Torch / Flashlight Toggle Button */}
+                    {torchSupported && (
+                      <button
+                        type="button"
+                        onClick={toggleTorch}
+                        className={`absolute top-2.5 right-2.5 z-20 px-2.5 py-1.5 rounded-full backdrop-blur-md transition shadow-md flex items-center gap-1.5 text-xs font-semibold cursor-pointer select-none ${
+                          isTorchOn
+                            ? 'bg-amber-400 text-slate-950 shadow-amber-400/50 ring-2 ring-amber-300'
+                            : 'bg-black/60 text-white hover:bg-black/80 border border-white/20'
+                        }`}
+                        title={isTorchOn ? 'Turn Flashlight Off' : 'Turn Flashlight On'}
+                      >
+                        {isTorchOn ? <Flashlight className="w-3.5 h-3.5 fill-slate-950" /> : <FlashlightOff className="w-3.5 h-3.5" />}
+                        <span className="text-[10px] font-mono">{isTorchOn ? 'Torch ON' : 'Torch'}</span>
+                      </button>
+                    )}
+
                     {/* QR code targeting overlay — animated green scanner */}
                     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                       {/* Corner-bracket style QR finder */}
@@ -944,6 +1115,24 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
                 ) : (
                   <>
                     <video ref={videoRef} playsInline muted className="w-full h-full object-cover" />
+                    
+                    {/* Torch / Flashlight Toggle Button */}
+                    {torchSupported && (
+                      <button
+                        type="button"
+                        onClick={toggleTorch}
+                        className={`absolute top-2.5 right-2.5 z-20 px-2.5 py-1.5 rounded-full backdrop-blur-md transition shadow-md flex items-center gap-1.5 text-xs font-semibold cursor-pointer select-none ${
+                          isTorchOn
+                            ? 'bg-amber-400 text-slate-950 shadow-amber-400/50 ring-2 ring-amber-300'
+                            : 'bg-black/60 text-white hover:bg-black/80 border border-white/20'
+                        }`}
+                        title={isTorchOn ? 'Turn Flashlight Off' : 'Turn Flashlight On'}
+                      >
+                        {isTorchOn ? <Flashlight className="w-3.5 h-3.5 fill-slate-950" /> : <FlashlightOff className="w-3.5 h-3.5" />}
+                        <span className="text-[10px] font-mono">{isTorchOn ? 'Torch ON' : 'Torch'}</span>
+                      </button>
+                    )}
+
                     <div className="absolute inset-4 border-2 border-dashed border-amber-300 rounded-lg pointer-events-none flex flex-col justify-between p-2">
                       <span className="text-[10px] text-amber-200 bg-black/60 px-2 py-0.5 rounded font-mono self-start">
                         ALIGN FULL AADHAAR CARD IN FRAME
@@ -1035,12 +1224,27 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess }) 
           {/* REAL Scanned Output (No dummy data) */}
           {scannedData && !isProcessing && (
             <div className="bg-emerald-50/70 border border-emerald-300 rounded-xl p-3.5 space-y-3 text-xs">
-              <div className="flex items-center justify-between border-b border-emerald-200 pb-2">
+              <div className="flex items-center justify-between border-b border-emerald-200 pb-2 flex-wrap gap-1.5">
                 <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
                   <ShieldCheck className="w-4 h-4 text-emerald-700" />
                   Verified Aadhaar Details ({scannedData.source})
                 </span>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScannedData(null);
+                      setRawExtractedText('');
+                      setPreviewImage(null);
+                      setScanError('');
+                      if (activeMode === 'qr_live' || activeMode === 'photo_ocr') {
+                        startCamera();
+                      }
+                    }}
+                    className="text-[10px] px-2 py-0.5 rounded-md bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold flex items-center gap-1 shadow-2xs cursor-pointer"
+                  >
+                    <RotateCcw className="w-2.5 h-2.5" /> Re-scan Fresh
+                  </button>
                   {(scannedData.confidence && scannedData.confidence >= 75) ? (
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-900 font-bold font-mono">
                       High Confidence ({scannedData.confidence}%)

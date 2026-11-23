@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   BedDouble, Camera, Waves, TrendingUp, ClipboardList, 
-  RefreshCw, LogOut, Wifi, WifiOff
+  RefreshCw, LogOut, Wifi, WifiOff, Bell, Sparkles, X, CheckCircle2, AlertTriangle
 } from 'lucide-react';
 import { api } from '../services/api';
 import { getSocket } from '../services/socket';
@@ -10,6 +10,53 @@ import RoomMatrixView from '../components/admin-app/RoomMatrixView';
 import OnSpotBookingTab from '../components/admin-app/OnSpotBookingTab';
 import PoolPassTab from '../components/admin-app/PoolPassTab';
 import ReportsTab from '../components/admin-app/ReportsTab';
+
+// Pleasant Web Audio Chimes for Real-Time Events
+function playNotificationChime(type = 'booking') {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+    
+    if (type === 'booking') {
+      // Luxury ascending double bell chime (E5 -> B5)
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc1.type = 'triangle';
+      osc2.type = 'sine';
+      osc1.frequency.setValueAtTime(659.25, now);
+      osc1.frequency.setValueAtTime(987.77, now + 0.16);
+      osc2.frequency.setValueAtTime(659.25 * 2, now);
+      osc2.frequency.setValueAtTime(987.77 * 2, now + 0.16);
+      gain.gain.setValueAtTime(0.22, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+      osc1.start(now);
+      osc2.start(now);
+      osc1.stop(now + 0.65);
+      osc2.stop(now + 0.65);
+    } else if (type === 'checkout') {
+      // Distinct alert descending chime (G5 -> C5)
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(783.99, now);
+      osc.frequency.setValueAtTime(523.25, now + 0.18);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.7);
+    }
+  } catch (e) {
+    // Audio not permitted or unsupported
+  }
+}
 
 export default function AdminApp() {
   const navigate = useNavigate();
@@ -19,6 +66,26 @@ export default function AdminApp() {
   const [loading, setLoading] = useState(true);
   const [preselectedRoom, setPreselectedRoom] = useState(null);
   const [isSocketConnected, setIsSocketConnected] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifHistory, setShowNotifHistory] = useState(false);
+
+  // Request browser desktop notification permissions if permitted
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
+
+  const addNotification = (item) => {
+    const id = Date.now() + Math.random();
+    const newNotif = { ...item, id };
+    setNotifications(prev => [newNotif, ...prev.slice(0, 9)]);
+
+    // Auto-dismiss from active toast view after 8 seconds
+    setTimeout(() => {
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, dismissed: true } : n));
+    }, 8000);
+  };
 
   useEffect(() => {
     loadMatrixData();
@@ -28,14 +95,71 @@ export default function AdminApp() {
     socket.on('connect', () => setIsSocketConnected(true));
     socket.on('disconnect', () => setIsSocketConnected(false));
     
-    // Live push events from server - refresh matrix instantly
+    // Live push events from server
     const handleMatrixUpdate = () => loadMatrixData(false);
+
+    // 1. New Booking Push Notification
+    const handleBookingCreated = (booking) => {
+      loadMatrixData(false);
+      playNotificationChime('booking');
+      const roomNum = booking?.roomNumber ? `Room ${booking.roomNumber}` : 'Room';
+      const guest = booking?.customerName || 'Guest';
+      const cat = booking?.category || 'Deluxe Room';
+      const amount = booking?.totalAmount ? `₹${booking.totalAmount.toLocaleString('en-IN')}` : '';
+      const src = booking?.bookingSource === 'onspot_app' ? 'Spot Allotment' : 'Online Website';
+
+      addNotification({
+        type: 'booking',
+        title: `🎉 New Reservation: ${roomNum}`,
+        guest,
+        category: cat,
+        amount,
+        source: src,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      });
+
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification(`🛎️ New Reservation: ${roomNum}`, {
+            body: `${guest} reserved ${roomNum} (${cat}) - ${src}`,
+            icon: '/logo.png'
+          });
+        } catch (e) {}
+      }
+    };
+
+    // 2. Check-Out Push Notification
+    const handleCheckOut = (data) => {
+      loadMatrixData(false);
+      playNotificationChime('checkout');
+      const roomNum = data?.roomNumber || data?.booking?.roomNumber || 'Room';
+      const guest = data?.booking?.customerName || 'Guest';
+      const isEarly = data?.isEarlyCheckout || false;
+
+      addNotification({
+        type: 'checkout',
+        title: `🚪 ${isEarly ? 'Early Check-Out' : 'Check-Out Completed'}: Room ${roomNum}`,
+        guest,
+        message: `${guest} checked out. Room ${roomNum} is now marked for Cleaning.`,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      });
+
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification(`🚪 Check-Out: Room ${roomNum}`, {
+            body: `${guest} checked out. Room ${roomNum} needs cleaning.`,
+            icon: '/logo.png'
+          });
+        } catch (e) {}
+      }
+    };
+
     socket.on('matrix_updated', handleMatrixUpdate);
-    socket.on('booking_created', handleMatrixUpdate);
+    socket.on('booking_created', handleBookingCreated);
     socket.on('booking_updated', handleMatrixUpdate);
     socket.on('booking_cancelled', handleMatrixUpdate);
-    socket.on('early_checkout', handleMatrixUpdate);
-    socket.on('room_checked_out', handleMatrixUpdate);
+    socket.on('early_checkout', handleCheckOut);
+    socket.on('room_checked_out', handleCheckOut);
     socket.on('room_cleaned', handleMatrixUpdate);
     socket.on('room_status_changed', handleMatrixUpdate);
 
@@ -46,11 +170,11 @@ export default function AdminApp() {
       socket.off('connect');
       socket.off('disconnect');
       socket.off('matrix_updated', handleMatrixUpdate);
-      socket.off('booking_created', handleMatrixUpdate);
+      socket.off('booking_created', handleBookingCreated);
       socket.off('booking_updated', handleMatrixUpdate);
       socket.off('booking_cancelled', handleMatrixUpdate);
-      socket.off('early_checkout', handleMatrixUpdate);
-      socket.off('room_checked_out', handleMatrixUpdate);
+      socket.off('early_checkout', handleCheckOut);
+      socket.off('room_checked_out', handleCheckOut);
       socket.off('room_cleaned', handleMatrixUpdate);
       socket.off('room_status_changed', handleMatrixUpdate);
       clearInterval(pollTimer);
@@ -147,6 +271,69 @@ export default function AdminApp() {
           </div>
 
           <div className="flex items-center gap-1.5">
+            {/* Real-time Notification Bell */}
+            <div className="relative">
+              <button
+                onClick={() => setShowNotifHistory(!showNotifHistory)}
+                className={`w-8 h-8 rounded-xl flex items-center justify-center transition border relative ${
+                  notifications.length > 0 && !notifications.every(n => n.dismissed)
+                    ? 'bg-amber-50 text-amber-800 border-amber-300'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200/60'
+                }`}
+                title="Recent Alerts & Notifications"
+              >
+                <Bell className="w-4 h-4" />
+                {notifications.filter(n => !n.dismissed).length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center ring-2 ring-white">
+                    {notifications.filter(n => !n.dismissed).length}
+                  </span>
+                )}
+              </button>
+
+              {/* Notification History Dropdown */}
+              {showNotifHistory && (
+                <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl border border-slate-200 p-3 z-50 text-xs space-y-2 animate-in fade-in">
+                  <div className="flex items-center justify-between border-b pb-2">
+                    <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                      <Bell className="w-3.5 h-3.5 text-amber-600" /> Live Resort Alerts
+                    </span>
+                    {notifications.length > 0 && (
+                      <button
+                        onClick={() => setNotifications([])}
+                        className="text-[10px] text-slate-400 hover:text-red-600 font-semibold"
+                      >
+                        Clear All
+                      </button>
+                    )}
+                  </div>
+                  {notifications.length === 0 ? (
+                    <p className="text-slate-400 text-center py-3 text-[11px]">No recent alerts.</p>
+                  ) : (
+                    <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
+                      {notifications.map(n => (
+                        <div
+                          key={n.id}
+                          className={`p-2.5 rounded-xl border text-[11px] space-y-0.5 ${
+                            n.type === 'booking'
+                              ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                              : 'bg-indigo-50/70 border-indigo-200 text-indigo-950'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between font-bold">
+                            <span>{n.title}</span>
+                            <span className="text-[9px] text-slate-400 font-normal">{n.time}</span>
+                          </div>
+                          <p className="text-slate-600 text-[10px]">
+                            {n.type === 'booking' ? `${n.guest} (${n.category}) • ${n.amount}` : n.message}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <button
               onClick={() => loadMatrixData(true)}
               disabled={loading}
@@ -165,6 +352,54 @@ export default function AdminApp() {
             </button>
           </div>
         </header>
+
+        {/* Real-time Floating Notification Toasts (Check-out & New Booking) */}
+        <div className="absolute top-16 left-3 right-3 z-40 pointer-events-none space-y-2">
+          {notifications.filter(n => !n.dismissed).slice(0, 2).map(n => (
+            <div
+              key={n.id}
+              className={`pointer-events-auto p-3.5 rounded-2xl shadow-xl border flex items-start gap-3 backdrop-blur-md transition-all duration-300 animate-in slide-in-from-top-3 ${
+                n.type === 'booking'
+                  ? 'bg-gradient-to-r from-emerald-50 via-white to-amber-50/50 border-emerald-300 text-emerald-950 shadow-emerald-900/10'
+                  : 'bg-gradient-to-r from-blue-50 via-white to-indigo-50/50 border-blue-300 text-blue-950 shadow-blue-900/10'
+              }`}
+            >
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
+                  n.type === 'booking'
+                    ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                    : 'bg-blue-100 text-blue-700 border-blue-300'
+                }`}
+              >
+                {n.type === 'booking' ? <Sparkles className="w-5 h-5" /> : <LogOut className="w-5 h-5" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-xs text-slate-900 leading-tight truncate">{n.title}</h4>
+                  <span className="text-[10px] text-slate-400 font-mono ml-2 shrink-0">{n.time}</span>
+                </div>
+                <p className="text-xs text-slate-700 font-medium mt-0.5 truncate">
+                  {n.type === 'booking' ? (
+                    <span><strong>{n.guest}</strong> • {n.category} • <strong className="text-emerald-700">{n.amount}</strong></span>
+                  ) : (
+                    <span>{n.message}</span>
+                  )}
+                </p>
+                {n.source && (
+                  <span className="inline-block mt-1 text-[9px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                    {n.source}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setNotifications(prev => prev.map(item => item.id === n.id ? { ...item, dismissed: true } : item))}
+                className="p-1 rounded-lg hover:bg-slate-200/50 text-slate-400 hover:text-slate-700 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
 
         {/* Scrollable Main Screen Content */}
         <main className="flex-1 p-3.5 sm:p-4 pb-24 overflow-y-auto space-y-4">
