@@ -13,6 +13,8 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [completedBooking, setCompletedBooking] = useState(null);
+  const [waStage, setWaStage] = useState('idle'); // 'idle' | 'customer_opened' | 'both_done'
+  const [isPdfLoading, setIsPdfLoading] = useState(false);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -34,8 +36,8 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
     durationPreset: '24', // '12', '24', '48'
     checkOutDate: '',
     checkOutTime: '11:00 AM',
-    rate: '',
-    advancePaid: '',
+    rate: '0',
+    advancePaid: '0',
     paymentMethod: 'Cash',
     notes: ''
   });
@@ -53,12 +55,8 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
   useEffect(() => {
     if (preselectedRoom) {
       setFormData(prev => ({ ...prev, roomNumber: preselectedRoom }));
-      const r = (rooms || []).find(rm => String(rm.roomNumber) === String(preselectedRoom));
-      if (r) {
-        setFormData(prev => ({ ...prev, rate: r.basePrice, advancePaid: r.basePrice }));
-      }
     }
-  }, [preselectedRoom, rooms]);
+  }, [preselectedRoom]);
 
   const handleAadhaarScanned = (scanned) => {
     if (scannerTarget === 'guest2') {
@@ -80,12 +78,9 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
   };
 
   const handleRoomChange = (roomNum) => {
-    const selected = (rooms || []).find(r => String(r.roomNumber) === String(roomNum));
     setFormData(prev => ({
       ...prev,
-      roomNumber: roomNum,
-      rate: selected ? selected.basePrice : prev.rate,
-      advancePaid: selected ? selected.basePrice : prev.advancePaid
+      roomNumber: roomNum
     }));
   };
 
@@ -150,11 +145,41 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
       });
 
       setCompletedBooking(created);
+      setWaStage('idle');
       if (onClearPreselectedRoom) onClearPreselectedRoom();
     } catch (err) {
       setErrorMessage(err.message || 'Failed to complete on-spot check-in.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleGeneratePDF = async (shouldPrint = false) => {
+    if (!completedBooking) return;
+    setIsPdfLoading(true);
+    try {
+      await generateReceiptPDF(completedBooking, shouldPrint);
+    } catch (err) {
+      alert(`PDF Notice: ${err.message}`);
+    } finally {
+      setIsPdfLoading(false);
+    }
+  };
+
+  const handleSendWhatsApp = () => {
+    if (!completedBooking) return;
+    if (waStage === 'idle') {
+      // Step 1: Open Customer WhatsApp
+      shareReceiptWhatsApp(completedBooking);
+      setWaStage('customer_opened');
+    } else if (waStage === 'customer_opened') {
+      // Step 2: Open Owner WhatsApp (8001800146)
+      shareReceiptToOwner(completedBooking);
+      setWaStage('both_done');
+    } else {
+      // Re-send if clicked again
+      shareReceiptWhatsApp(completedBooking);
+      setWaStage('customer_opened');
     }
   };
 
@@ -509,9 +534,19 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
                 <input
                   type="number"
                   required
-                  placeholder="e.g. 3499"
+                  placeholder="0"
                   value={formData.rate}
-                  onChange={e => setFormData({ ...formData, rate: e.target.value, advancePaid: e.target.value })}
+                  onFocus={e => {
+                    if (e.target.value === '0') {
+                      setFormData(prev => ({ ...prev, rate: '', advancePaid: '' }));
+                    }
+                  }}
+                  onBlur={e => {
+                    if (!e.target.value || e.target.value === '') {
+                      setFormData(prev => ({ ...prev, rate: '0', advancePaid: '0' }));
+                    }
+                  }}
+                  onChange={e => setFormData(prev => ({ ...prev, rate: e.target.value, advancePaid: e.target.value }))}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 font-bold focus:bg-white outline-none"
                 />
               </div>
@@ -652,33 +687,45 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => generateReceiptPDF(completedBooking, true)}
-                  className="flex-1 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center justify-center gap-1"
+                  disabled={isPdfLoading}
+                  onClick={() => handleGeneratePDF(true)}
+                  className="flex-1 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center justify-center gap-1 disabled:opacity-50 cursor-pointer"
                 >
-                  <Printer className="w-4 h-4" /> Print
+                  <Printer className="w-4 h-4" /> {isPdfLoading ? 'Processing...' : 'Print'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => generateReceiptPDF(completedBooking, false)}
-                  className="flex-1 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold flex items-center justify-center gap-1"
+                  disabled={isPdfLoading}
+                  onClick={() => handleGeneratePDF(false)}
+                  className="flex-1 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold flex items-center justify-center gap-1 disabled:opacity-50 cursor-pointer"
                 >
-                  <Download className="w-4 h-4" /> PDF
+                  <Download className="w-4 h-4" /> {isPdfLoading ? 'Saving...' : 'PDF'}
                 </button>
               </div>
-              <div className="space-y-1.5 pt-0.5">
+              <div className="pt-0.5">
                 <button
                   type="button"
-                  onClick={() => shareReceiptWhatsApp(completedBooking)}
-                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-xs transition active:scale-98 cursor-pointer"
+                  onClick={handleSendWhatsApp}
+                  className={`w-full py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition active:scale-98 cursor-pointer ${
+                    waStage === 'customer_opened'
+                      ? 'bg-[#1E293B] hover:bg-slate-800 text-amber-300 border border-amber-400/50 shadow-md animate-pulse'
+                      : waStage === 'both_done'
+                      ? 'bg-emerald-700 text-white'
+                      : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                  }`}
                 >
-                  <MessageCircle className="w-4 h-4" /> Send WhatsApp to Customer ({completedBooking.phone || 'Guest'})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => shareReceiptToOwner(completedBooking)}
-                  className="w-full py-2.5 rounded-xl bg-[#1E293B] hover:bg-slate-800 text-amber-300 border border-amber-400/40 text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition active:scale-98 cursor-pointer"
-                >
-                  <ShieldCheck className="w-4 h-4 text-amber-400" /> Send WhatsApp to Owner (Rushikesh: 8001800146)
+                  {waStage === 'both_done' ? (
+                    <Check className="w-4 h-4 shrink-0 text-white" />
+                  ) : (
+                    <MessageCircle className="w-4 h-4 shrink-0" />
+                  )}
+                  <span>
+                    {waStage === 'customer_opened'
+                      ? '✓ Customer Sent! Click to Send to Owner (8001800146)'
+                      : waStage === 'both_done'
+                      ? '✓ Receipt Sent to Customer & Owner (8001800146)'
+                      : 'Send WhatsApp Receipt (Customer & Owner)'}
+                  </span>
                 </button>
               </div>
               <button

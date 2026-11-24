@@ -1,7 +1,15 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
+import { Capacitor } from '@capacitor/core';
 
-export function generateReceiptPDF(booking, shouldPrint = false) {
+export const OWNER_PHONE = '8001800146';
+export const OWNER_NAME = 'Rushikesh Rohankar';
+export const RESORT_OFFICIAL_ADDRESS = 'QP9F+QGV, Nagzari Rd, Mahatma Jyotiba Phule Nagar, Shegaon, Maharashtra 444203';
+export const RESORT_WEBSITE_URL = 'https://sadguru-resort-frontend.vercel.app/';
+
+export async function generateReceiptPDF(booking, shouldPrint = false) {
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -32,9 +40,9 @@ export function generateReceiptPDF(booking, shouldPrint = false) {
 
   doc.setFontSize(7.5);
   doc.setTextColor(200, 200, 200);
-  doc.text('Contact: Rushikesh Rohankar (+91 8001800146 / +91 98220 11223) • Web: sadgururesort.com', 105, 30, { align: 'center' });
+  doc.text(`Contact: ${OWNER_NAME} - ${OWNER_PHONE} • Web: ${RESORT_WEBSITE_URL}`, 105, 30, { align: 'center' });
   doc.setFontSize(7);
-  doc.text('QP9F+QGV, Nagzari Rd, Mahatma Jyotiba Phule Nagar, Shegaon, Maharashtra 444203', 105, 34, { align: 'center' });
+  doc.text(RESORT_OFFICIAL_ADDRESS, 105, 34, { align: 'center' });
 
   // 2. Receipt Badge
   doc.setFontSize(14);
@@ -143,45 +151,73 @@ export function generateReceiptPDF(booking, shouldPrint = false) {
   doc.text('Guest Signature', 47.5, sigY + 5, { align: 'center' });
   doc.text('Authorized Resort Front Desk', 162.5, sigY + 5, { align: 'center' });
 
-  // Output
-  if (shouldPrint) {
-    doc.autoPrint();
-    const blob = doc.output('bloburl');
-    window.open(blob, '_blank');
+  // Output Handling (Native Android & Web Browser)
+  const fileName = `Sadguru_Resort_Receipt_${booking.id || 'Booking'}.pdf`;
+
+  if (Capacitor.isNativePlatform()) {
+    try {
+      // Extract Base64 string from jsPDF
+      const dataUri = doc.output('datauristring');
+      const base64Data = dataUri.split(',')[1];
+
+      // Save directly to device Cache directory (no special permissions required)
+      const savedFile = await Filesystem.writeFile({
+        path: fileName,
+        data: base64Data,
+        directory: Directory.Cache
+      });
+
+      // Launch native Android chooser for viewing, printing, saving to Downloads, or sharing
+      await Share.share({
+        title: shouldPrint ? 'Print Sadguru Resort Receipt' : 'Save Sadguru Resort Receipt',
+        text: `Official Booking Receipt - Room ${booking.roomNumber || ''} (${booking.customerName || ''})`,
+        url: savedFile.uri,
+        dialogTitle: shouldPrint ? 'Print / Save Receipt' : 'Download / Save PDF Receipt'
+      });
+
+      return { success: true, uri: savedFile.uri };
+    } catch (nativeErr) {
+      console.warn('Native Capacitor PDF handling warning:', nativeErr);
+      doc.save(fileName);
+      return { success: true };
+    }
   } else {
-    doc.save(`Sadguru_Resort_Receipt_${booking.id || 'Booking'}.pdf`);
+    // Standard Desktop / Web Browser
+    if (shouldPrint) {
+      doc.autoPrint();
+      const blob = doc.output('bloburl');
+      window.open(blob, '_blank');
+    } else {
+      doc.save(fileName);
+    }
+    return { success: true };
   }
 }
 
-export const OWNER_PHONE = '8001800146';
-export const OWNER_NAME = 'Rushikesh Rohankar';
-export const RESORT_OFFICIAL_ADDRESS = 'QP9F+QGV, Nagzari Rd, Mahatma Jyotiba Phule Nagar, Shegaon, Maharashtra 444203';
-
-export function formatReceiptWhatsAppMessage(booking, isOwnerCopy = false) {
+export function formatReceiptWhatsAppMessage(booking) {
   const isCouple = booking.stayType === 'Couple' || Boolean(booking.secondGuestName);
-  return (
-`🏨 *SHRI SADGURU RESORT - ${isOwnerCopy ? '👑 OWNER / FRONT DESK COPY' : 'BOOKING CONFIRMATION'}*
-━━━━━━━━━━━━━━━━━━━━━
-*Booking ID:* ${booking.id || 'N/A'}
-*Guest Name:* ${booking.customerName || 'N/A'}
-${booking.secondGuestName ? `*Partner / 2nd Guest:* ${booking.secondGuestName} (${booking.secondGuestAge ? `${booking.secondGuestAge} Yrs` : ''})\n` : ''}*Room Number:* ${booking.roomNumber || 'Assigned on Arrival'} (${booking.category || 'Deluxe AC'})
-*Stay Type:* ${booking.stayType || (isCouple ? 'Couple' : 'Family')}
-*Check-in:* ${booking.checkIn || 'Today'} (${booking.checkInTime || '12:00 PM'})
-*Check-out:* ${booking.checkOut || 'Tomorrow'} (${booking.checkOutTime || '11:00 AM'})
-━━━━━━━━━━━━━━━━━━━━━
-*Total Amount:* ₹${(booking.totalAmount || 0).toLocaleString('en-IN')}
-*Advance Paid:* ₹${(booking.advancePaid || 0).toLocaleString('en-IN')} (${booking.paymentMethod || 'Cash'})
-*Balance Due:* ₹${(booking.remainingBalance || 0).toLocaleString('en-IN')}
-*Status:* ${booking.status || 'Confirmed / Checked-In'}
-━━━━━━━━━━━━━━━━━━━━━
-📍 *Address:* ${RESORT_OFFICIAL_ADDRESS}
-📞 *Contact:* ${OWNER_NAME} (+91 ${OWNER_PHONE}) / +91 98220 11223
-🌐 https://sadgururesort.com/track`
-  );
+  
+  const lines = [
+    '🏨 *Shri Sadguru resort booking - booking confirmation*',
+    '━━━━━━━━━━━━━━━━━━━━━',
+    `*Booking ID:* ${booking.id || 'N/A'}`,
+    `*Guest Name:* ${booking.customerName || 'N/A'}`,
+    booking.secondGuestName ? `*Partner Name:* ${booking.secondGuestName}${booking.secondGuestAge ? ` (${booking.secondGuestAge} Yrs)` : ''}` : null,
+    `*Guest Check-in Time:* ${booking.checkIn || 'Today'} (${booking.checkInTime || '12:00 PM'})`,
+    `*Guest Check-out Time:* ${booking.checkOut || 'Tomorrow'} (${booking.checkOutTime || '11:00 AM'})`,
+    `*Stay Type:* ${booking.stayType || (isCouple ? 'Couple' : 'Family')}`,
+    `*Room Number:* Room ${booking.roomNumber || 'Assigned'} (${booking.category || 'Deluxe AC'})`,
+    `*Total Amount:* ₹${(booking.totalAmount || 0).toLocaleString('en-IN')}`,
+    '━━━━━━━━━━━━━━━━━━━━━',
+    `📍 *Address:* ${RESORT_OFFICIAL_ADDRESS}`,
+    `📞 *Contact:* ${OWNER_NAME} - ${OWNER_PHONE}`,
+    `🌐 ${RESORT_WEBSITE_URL}`
+  ].filter(Boolean);
+
+  return lines.join('\n');
 }
 
 export function shareReceiptWhatsApp(booking, targetPhone = null) {
-  const isOwner = targetPhone === OWNER_PHONE;
   const rawPhone = targetPhone || booking.phone || '';
   const cleanPhone = String(rawPhone).replace(/[^0-9]/g, '');
   
@@ -191,7 +227,7 @@ export function shareReceiptWhatsApp(booking, targetPhone = null) {
   }
   
   const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-  const text = formatReceiptWhatsAppMessage(booking, isOwner);
+  const text = formatReceiptWhatsAppMessage(booking);
   const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(text)}`;
   window.open(url, '_blank');
 }
