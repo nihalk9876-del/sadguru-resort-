@@ -2,10 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { 
   Camera, Check, ShieldCheck, User, Phone, Hash, Calendar, 
   Clock, DollarSign, BedDouble, AlertCircle, Sparkles, Printer, 
-  MessageCircle, ArrowRight, RefreshCw, X, Download, Heart, Home, Users
+  MessageCircle, ArrowRight, RefreshCw, X, Download, Heart, Home, Users, Image
 } from 'lucide-react';
 import AadhaarScannerModal from './AadhaarScannerModal';
-import { generateReceiptPDF, shareReceiptWhatsApp, shareReceiptToOwner } from '../../utils/pdfReceipt';
+import { generateReceiptPDF } from '../../utils/pdfReceipt';
+import { 
+  shareBillImageWithWhatsApp, 
+  downloadBillImage, 
+  OWNER_PHONE, 
+  OWNER_NAME 
+} from '../../utils/billImageReceipt';
 
 export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedRoom, onClearPreselectedRoom }) {
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -15,6 +21,8 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
   const [completedBooking, setCompletedBooking] = useState(null);
   const [waStage, setWaStage] = useState('idle'); // 'idle' | 'customer_opened' | 'both_done'
   const [isPdfLoading, setIsPdfLoading] = useState(false);
+  const [isImageLoading, setIsImageLoading] = useState(false);
+  const [isBillSharing, setIsBillSharing] = useState(false);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -166,20 +174,39 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
     }
   };
 
-  const handleSendWhatsApp = () => {
+  const handleDownloadImage = async () => {
     if (!completedBooking) return;
-    if (waStage === 'idle') {
-      // Step 1: Open Customer WhatsApp
-      shareReceiptWhatsApp(completedBooking);
-      setWaStage('customer_opened');
-    } else if (waStage === 'customer_opened') {
-      // Step 2: Open Owner WhatsApp (8001800146)
-      shareReceiptToOwner(completedBooking);
-      setWaStage('both_done');
-    } else {
-      // Re-send if clicked again
-      shareReceiptWhatsApp(completedBooking);
-      setWaStage('customer_opened');
+    setIsImageLoading(true);
+    try {
+      await downloadBillImage(completedBooking);
+    } catch (err) {
+      alert(`Image Notice: ${err.message}`);
+    } finally {
+      setIsImageLoading(false);
+    }
+  };
+
+  const handleSendWhatsApp = async () => {
+    if (!completedBooking) return;
+    setIsBillSharing(true);
+    try {
+      if (waStage === 'idle') {
+        // Step 1: Open Customer WhatsApp with Bill Image + Short Details & "Visit Again"
+        await shareBillImageWithWhatsApp(completedBooking, null, false);
+        setWaStage('customer_opened');
+      } else if (waStage === 'customer_opened') {
+        // Step 2: Open Owner WhatsApp with Bill Image + Short Details & "Visit Again" (8001800146)
+        await shareBillImageWithWhatsApp(completedBooking, OWNER_PHONE, true);
+        setWaStage('both_done');
+      } else {
+        // Re-send if clicked again
+        await shareBillImageWithWhatsApp(completedBooking, null, false);
+        setWaStage('customer_opened');
+      }
+    } catch (err) {
+      alert(`Bill Sharing Notice: ${err.message}`);
+    } finally {
+      setIsBillSharing(false);
     }
   };
 
@@ -689,22 +716,23 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
                   type="button"
                   disabled={isPdfLoading}
                   onClick={() => handleGeneratePDF(true)}
-                  className="flex-1 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center justify-center gap-1 disabled:opacity-50 cursor-pointer"
+                  className="flex-1 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
                 >
                   <Printer className="w-4 h-4" /> {isPdfLoading ? 'Processing...' : 'Print'}
                 </button>
                 <button
                   type="button"
-                  disabled={isPdfLoading}
-                  onClick={() => handleGeneratePDF(false)}
-                  className="flex-1 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold flex items-center justify-center gap-1 disabled:opacity-50 cursor-pointer"
+                  disabled={isImageLoading}
+                  onClick={handleDownloadImage}
+                  className="flex-1 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
                 >
-                  <Download className="w-4 h-4" /> {isPdfLoading ? 'Saving...' : 'PDF'}
+                  <Image className="w-4 h-4 text-amber-700" /> {isImageLoading ? 'Saving...' : 'Save Bill Image'}
                 </button>
               </div>
               <div className="pt-0.5">
                 <button
                   type="button"
+                  disabled={isBillSharing}
                   onClick={handleSendWhatsApp}
                   className={`w-full py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition active:scale-98 cursor-pointer ${
                     waStage === 'customer_opened'
@@ -720,11 +748,13 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
                     <MessageCircle className="w-4 h-4 shrink-0" />
                   )}
                   <span>
-                    {waStage === 'customer_opened'
+                    {isBillSharing
+                      ? 'Creating Bill Image...'
+                      : waStage === 'customer_opened'
                       ? '✓ Customer Sent! Click to Send to Owner (8001800146)'
                       : waStage === 'both_done'
-                      ? '✓ Receipt Sent to Customer & Owner (8001800146)'
-                      : 'Send WhatsApp Receipt (Customer & Owner)'}
+                      ? '✓ Bill Image & Message Sent to Both (8001800146)'
+                      : 'Send Bill Image & Message (WhatsApp)'}
                   </span>
                 </button>
               </div>
