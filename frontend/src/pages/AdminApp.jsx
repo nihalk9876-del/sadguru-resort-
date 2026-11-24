@@ -12,6 +12,7 @@ import RoomMatrixView from '../components/admin-app/RoomMatrixView';
 import OnSpotBookingTab from '../components/admin-app/OnSpotBookingTab';
 import PoolPassTab from '../components/admin-app/PoolPassTab';
 import ReportsTab from '../components/admin-app/ReportsTab';
+import { initPushNotifications } from '../services/pushNotificationService';
 
 // Pleasant Web Audio Chimes for Real-Time Events
 function playNotificationChime(type = 'booking') {
@@ -80,6 +81,22 @@ export default function AdminApp() {
     const timer = setTimeout(() => {
       setShowWelcomeSplash(false);
     }, 1300);
+
+    // Initialize native Firebase Cloud Messaging (FCM) push notifications
+    initPushNotifications({
+      onNotificationReceived: (notif) => {
+        console.log('[AdminApp] Push notification arrived:', notif);
+        // Refresh room floor plan & reports automatically
+        fetchMatrix();
+        fetchReports();
+      },
+      onNotificationTapped: (notif) => {
+        console.log('[AdminApp] User opened notification:', notif);
+        switchTab('matrix');
+        fetchMatrix();
+      }
+    });
+
     return () => clearTimeout(timer);
   }, []);
 

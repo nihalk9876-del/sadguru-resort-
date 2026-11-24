@@ -300,5 +300,31 @@ export const api = {
       headers: getAuthHeaders()
     });
     return handleResponse(res);
+  },
+
+  // FCM Device Token Registration
+  registerDeviceToken: async ({ token, deviceName, platform }) => {
+    const res = await fetch(`${API_BASE}/admin/device-token`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ token, deviceName, platform })
+    });
+    return handleResponse(res);
+  },
+
+  unregisterDeviceToken: async (token) => {
+    const res = await fetch(`${API_BASE}/admin/device-token`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ token })
+    });
+    return handleResponse(res);
+  },
+
+  getNotificationLogs: async () => {
+    const res = await fetch(`${API_BASE}/admin/notification-logs`, {
+      headers: getAuthHeaders()
+    });
+    return handleResponse(res);
   }
 };

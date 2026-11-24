@@ -1,5 +1,6 @@
 const db = require('../database/db');
 const { broadcastEvent } = require('../socket');
+const notificationService = require('../services/notificationService');
 
 exports.createBooking = async (req, res) => {
   try {
@@ -24,6 +25,12 @@ exports.createBooking = async (req, res) => {
     broadcastEvent('booking_created', booking);
     const matrix = await db.getRoomMatrix();
     broadcastEvent('matrix_updated', matrix);
+
+    // Push notification to owner and admin after DB confirmation
+    notificationService.sendBookingNotification({
+      booking,
+      roomNumbers: [booking.roomNumber]
+    }).catch(notifErr => console.warn('[FCM Public Booking Push Error]:', notifErr.message));
 
     return res.status(201).json({ success: true, message: 'Reservation created and confirmed successfully!', booking });
   } catch (err) {
@@ -77,6 +84,15 @@ exports.updateBookingStatus = async (req, res) => {
     broadcastEvent('booking_updated', updated);
     const matrix = await db.getRoomMatrix();
     broadcastEvent('matrix_updated', matrix);
+
+    if (status === 'Checked Out') {
+      notificationService.sendCheckoutNotification({
+        booking: updated,
+        roomNumber: updated.roomNumber,
+        isEarly: false
+      }).catch(err => console.warn('[FCM Status Checkout Push Error]:', err.message));
+    }
+
     return res.json({ success: true, message: `Booking ${id} updated successfully.`, booking: updated });
   } catch (err) {
     return res.status(400).json({ success: false, message: err.message });
@@ -91,6 +107,13 @@ exports.cancelBooking = async (req, res) => {
     broadcastEvent('booking_cancelled', cancelled);
     const matrix = await db.getRoomMatrix();
     broadcastEvent('matrix_updated', matrix);
+
+    notificationService.sendCancellationNotification({
+      booking: cancelled,
+      roomNumber: cancelled.roomNumber,
+      reason
+    }).catch(err => console.warn('[FCM Cancel Push Error]:', err.message));
+
     return res.json({ success: true, message: `Booking ${id} has been cancelled.`, booking: cancelled });
   } catch (err) {
     return res.status(400).json({ success: false, message: err.message });

@@ -20,4 +20,9 @@ router.post('/add-payment', adminController.addPayment);
 router.post('/pool-pass', adminController.createPoolPass);
 router.get('/reports', adminController.getReports);
 
+// Push Notification & FCM token management
+router.post('/device-token', adminController.registerDeviceToken);
+router.delete('/device-token', adminController.unregisterDeviceToken);
+router.get('/notification-logs', adminController.getNotificationLogs);
+
 module.exports = router;

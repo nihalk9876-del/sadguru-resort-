@@ -1,5 +1,6 @@
 const db = require('../database/db');
 const { broadcastEvent } = require('../socket');
+const notificationService = require('../services/notificationService');
 
 exports.getStats = async (req, res) => {
   try {
@@ -51,6 +52,13 @@ exports.createOnSpotBooking = async (req, res) => {
     broadcastEvent('booking_created', booking);
     const matrix = await db.getRoomMatrix();
     broadcastEvent('matrix_updated', matrix);
+
+    // Trigger Push Notification to Owner & Admin mobile devices after DB confirmation
+    notificationService.sendBookingNotification({
+      booking,
+      roomNumbers: [booking.roomNumber]
+    }).catch(notifErr => console.warn('[FCM Booking Push Alert Error]:', notifErr.message));
+
     return res.status(201).json({
       success: true,
       message: `Room ${booking.roomNumber} successfully allotted and checked-in!`,
@@ -73,6 +81,13 @@ exports.checkoutRoom = async (req, res) => {
     const matrix = await db.getRoomMatrix();
     broadcastEvent('matrix_updated', matrix);
 
+    // Trigger Push Notification to Owner & Admin mobile devices after DB confirmation
+    notificationService.sendCheckoutNotification({
+      booking: result.booking,
+      roomNumber,
+      isEarly: false
+    }).catch(notifErr => console.warn('[FCM Checkout Push Alert Error]:', notifErr.message));
+
     return res.json({
       success: true,
       message: `Room ${roomNumber} checked out and moved to Cleaning status.`,
@@ -94,6 +109,13 @@ exports.earlyCheckout = async (req, res) => {
     broadcastEvent('early_checkout', { roomNumber: result.booking.roomNumber, booking: result.booking });
     const matrix = await db.getRoomMatrix();
     broadcastEvent('matrix_updated', matrix);
+
+    // Trigger Push Notification to Owner & Admin mobile devices after DB confirmation
+    notificationService.sendCheckoutNotification({
+      booking: result.booking,
+      roomNumber: result.booking.roomNumber,
+      isEarly: true
+    }).catch(notifErr => console.warn('[FCM Early Checkout Push Alert Error]:', notifErr.message));
 
     return res.json({
       success: true,
@@ -183,6 +205,68 @@ exports.getReports = async (req, res) => {
     const targetDate = req.query.date || null;
     const reports = await db.getAdminReports(timeframe, targetDate);
     return res.json({ success: true, reports });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FCM PUSH NOTIFICATION CONTROLLERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Register or refresh Admin FCM Device Token
+exports.registerDeviceToken = async (req, res) => {
+  try {
+    const { token, deviceName, platform } = req.body;
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Device token is required.' });
+    }
+
+    const adminUser = req.admin || { id: 'rushi@8001', name: 'Rushikesh Rohankar' };
+    const registered = await notificationService.registerDeviceToken({
+      token,
+      adminId: adminUser.id || adminUser.email || 'rushi@8001',
+      adminName: adminUser.name || 'Rushikesh Rohankar',
+      deviceName: deviceName || 'Android Admin Mobile',
+      platform: platform || 'android'
+    });
+
+    return res.json({
+      success: true,
+      message: 'FCM device token registered for automatic booking and checkout notifications.',
+      device: registered
+    });
+  } catch (err) {
+    console.error('Register device token error:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// Deactivate Admin FCM Device Token on logout or uninstall
+exports.unregisterDeviceToken = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Device token is required.' });
+    }
+    await notificationService.unregisterDeviceToken(token);
+    return res.json({ success: true, message: 'FCM device token unregistered successfully.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// Notification Audit Logs for Dashboard
+exports.getNotificationLogs = async (req, res) => {
+  try {
+    const limit = Number(req.query.limit) || 50;
+    const logs = await notificationService.getNotificationLogs(limit);
+    return res.json({
+      success: true,
+      isFirebaseReady: notificationService.isFirebaseReady(),
+      count: logs.length,
+      logs
+    });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }

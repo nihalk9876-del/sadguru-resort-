@@ -147,6 +147,40 @@ const PoolBooking = mongoose.models.PoolBooking || mongoose.model('PoolBooking',
 const Settings = mongoose.models.Settings || mongoose.model('Settings', SettingsSchema);
 const RevenueArchive = mongoose.models.RevenueArchive || mongoose.model('RevenueArchive', RevenueArchiveSchema);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. ADMIN DEVICE TOKEN SCHEMA (FCM Push Notifications)
+// ─────────────────────────────────────────────────────────────────────────────
+const AdminDeviceTokenSchema = new mongoose.Schema({
+  token: { type: String, required: true, unique: true },
+  adminId: { type: String, default: 'rushi@8001' },
+  adminName: { type: String, default: 'Rushikesh Rohankar' },
+  deviceName: { type: String, default: 'Android Admin Device' },
+  platform: { type: String, default: 'android' },
+  lastActive: { type: Date, default: Date.now },
+  isActive: { type: Boolean, default: true }
+}, { timestamps: true });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. NOTIFICATION LOG SCHEMA (FCM Delivery Audit & Reliability)
+// ─────────────────────────────────────────────────────────────────────────────
+const NotificationLogSchema = new mongoose.Schema({
+  notificationId: { type: String, required: true, unique: true },
+  type: { type: String, required: true }, // 'booking' | 'checkout' | 'cancellation'
+  title: { type: String, required: true },
+  body: { type: String, required: true },
+  roomNumber: { type: String },
+  bookingId: { type: String },
+  recipientsCount: { type: Number, default: 0 },
+  successCount: { type: Number, default: 0 },
+  failureCount: { type: Number, default: 0 },
+  status: { type: String, default: 'sent' }, // 'sent' | 'no_tokens' | 'failed' | 'firebase_unconfigured'
+  errorDetails: { type: String },
+  sentAt: { type: Date, default: Date.now }
+}, { timestamps: true });
+
+const AdminDeviceToken = mongoose.model('AdminDeviceToken', AdminDeviceTokenSchema);
+const NotificationLog = mongoose.model('NotificationLog', NotificationLogSchema);
+
 let isConnected = false;
 
 async function connectMongo() {
@@ -224,5 +258,7 @@ module.exports = {
   PoolBooking,
   Settings,
   RevenueArchive,
+  AdminDeviceToken,
+  NotificationLog,
   getIsConnected: () => isConnected
 };

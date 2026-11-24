@@ -5,7 +5,7 @@ import {
   MessageCircle, ArrowRight, RefreshCw, X, Download, Heart, Home, Users
 } from 'lucide-react';
 import AadhaarScannerModal from './AadhaarScannerModal';
-import { generateReceiptPDF, shareReceiptWhatsApp } from '../../utils/pdfReceipt';
+import { generateReceiptPDF, shareReceiptWhatsApp, shareReceiptToOwner } from '../../utils/pdfReceipt';
 
 export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedRoom, onClearPreselectedRoom }) {
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -665,13 +665,22 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
                   <Download className="w-4 h-4" /> PDF
                 </button>
               </div>
-              <button
-                type="button"
-                onClick={() => shareReceiptWhatsApp(completedBooking)}
-                className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1"
-              >
-                <MessageCircle className="w-4 h-4" /> Send WhatsApp Receipt
-              </button>
+              <div className="space-y-1.5 pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => shareReceiptWhatsApp(completedBooking)}
+                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-xs transition active:scale-98 cursor-pointer"
+                >
+                  <MessageCircle className="w-4 h-4" /> Send WhatsApp to Customer ({completedBooking.phone || 'Guest'})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => shareReceiptToOwner(completedBooking)}
+                  className="w-full py-2.5 rounded-xl bg-[#1E293B] hover:bg-slate-800 text-amber-300 border border-amber-400/40 text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition active:scale-98 cursor-pointer"
+                >
+                  <ShieldCheck className="w-4 h-4 text-amber-400" /> Send WhatsApp to Owner (Rushikesh: 8001800146)
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={() => setCompletedBooking(null)}

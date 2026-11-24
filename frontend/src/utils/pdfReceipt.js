@@ -30,9 +30,11 @@ export function generateReceiptPDF(booking, shouldPrint = false) {
   doc.setTextColor(218, 165, 32);
   doc.text('LUXURY LIVING & SERENE TRANQUILLITY • SHEGAON, MAHARASHTRA', 105, 25, { align: 'center' });
 
-  doc.setFontSize(8);
+  doc.setFontSize(7.5);
   doc.setTextColor(200, 200, 200);
-  doc.text('Phone: +91 98220 11223 • Web: sadgururesort.com • Near Dnyaneshwar Mandir', 105, 31, { align: 'center' });
+  doc.text('Contact: Rushikesh Rohankar (+91 8001800146 / +91 98220 11223) • Web: sadgururesort.com', 105, 30, { align: 'center' });
+  doc.setFontSize(7);
+  doc.text('QP9F+QGV, Nagzari Rd, Mahatma Jyotiba Phule Nagar, Shegaon, Maharashtra 444203', 105, 34, { align: 'center' });
 
   // 2. Receipt Badge
   doc.setFontSize(14);
@@ -151,26 +153,49 @@ export function generateReceiptPDF(booking, shouldPrint = false) {
   }
 }
 
-export function shareReceiptWhatsApp(booking) {
-  const text = 
-`🏨 *SHRI SADGURU RESORT - BOOKING CONFIRMATION*
+export const OWNER_PHONE = '8001800146';
+export const OWNER_NAME = 'Rushikesh Rohankar';
+export const RESORT_OFFICIAL_ADDRESS = 'QP9F+QGV, Nagzari Rd, Mahatma Jyotiba Phule Nagar, Shegaon, Maharashtra 444203';
+
+export function formatReceiptWhatsAppMessage(booking, isOwnerCopy = false) {
+  const isCouple = booking.stayType === 'Couple' || Boolean(booking.secondGuestName);
+  return (
+`🏨 *SHRI SADGURU RESORT - ${isOwnerCopy ? '👑 OWNER / FRONT DESK COPY' : 'BOOKING CONFIRMATION'}*
 ━━━━━━━━━━━━━━━━━━━━━
-*Booking ID:* ${booking.id}
-*Guest Name:* ${booking.customerName}
-*Room:* ${booking.roomNumber || 'Assigned'} (${booking.category || 'Deluxe AC'})
-*Check-in:* ${booking.checkIn} (${booking.checkInTime || '12:00 PM'})
-*Check-out:* ${booking.checkOut} (${booking.checkOutTime || '11:00 AM'})
+*Booking ID:* ${booking.id || 'N/A'}
+*Guest Name:* ${booking.customerName || 'N/A'}
+${booking.secondGuestName ? `*Partner / 2nd Guest:* ${booking.secondGuestName} (${booking.secondGuestAge ? `${booking.secondGuestAge} Yrs` : ''})\n` : ''}*Room Number:* ${booking.roomNumber || 'Assigned on Arrival'} (${booking.category || 'Deluxe AC'})
+*Stay Type:* ${booking.stayType || (isCouple ? 'Couple' : 'Family')}
+*Check-in:* ${booking.checkIn || 'Today'} (${booking.checkInTime || '12:00 PM'})
+*Check-out:* ${booking.checkOut || 'Tomorrow'} (${booking.checkOutTime || '11:00 AM'})
 ━━━━━━━━━━━━━━━━━━━━━
 *Total Amount:* ₹${(booking.totalAmount || 0).toLocaleString('en-IN')}
-*Advance Paid:* ₹${(booking.advancePaid || 0).toLocaleString('en-IN')}
+*Advance Paid:* ₹${(booking.advancePaid || 0).toLocaleString('en-IN')} (${booking.paymentMethod || 'Cash'})
 *Balance Due:* ₹${(booking.remainingBalance || 0).toLocaleString('en-IN')}
-*Status:* ${booking.status || 'Confirmed'}
+*Status:* ${booking.status || 'Confirmed / Checked-In'}
 ━━━━━━━━━━━━━━━━━━━━━
-📍 Near Dnyaneshwar Mandir, Jalamb Road, Shegaon
-📞 +91 98220 11223
-🌐 https://sadgururesort.com/track`;
+📍 *Address:* ${RESORT_OFFICIAL_ADDRESS}
+📞 *Contact:* ${OWNER_NAME} (+91 ${OWNER_PHONE}) / +91 98220 11223
+🌐 https://sadgururesort.com/track`
+  );
+}
 
-  const phone = (booking.phone || '').replace(/[^0-9]/g, '');
-  const url = `https://wa.me/${phone.startsWith('91') ? phone : `91${phone}`}?text=${encodeURIComponent(text)}`;
+export function shareReceiptWhatsApp(booking, targetPhone = null) {
+  const isOwner = targetPhone === OWNER_PHONE;
+  const rawPhone = targetPhone || booking.phone || '';
+  const cleanPhone = String(rawPhone).replace(/[^0-9]/g, '');
+  
+  if (!cleanPhone) {
+    alert('Please enter a valid phone number to share WhatsApp receipt.');
+    return;
+  }
+  
+  const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+  const text = formatReceiptWhatsAppMessage(booking, isOwner);
+  const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(text)}`;
   window.open(url, '_blank');
+}
+
+export function shareReceiptToOwner(booking) {
+  shareReceiptWhatsApp(booking, OWNER_PHONE);
 }
