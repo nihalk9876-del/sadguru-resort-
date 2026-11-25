@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "100000000000",
-    "project_id": "sadguru-resort-app",
-    "storage_bucket": "sadguru-resort-app.appspot.com"
+    "project_number": "717208348561",
+    "project_id": "sadguru-resort",
+    "storage_bucket": "sadguru-resort.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:100000000000:android:a1b2c3d4e5f60718293a4b",
+        "mobilesdk_app_id": "1:717208348561:android:4a867ac0c9ad1e37ed5c30",
         "android_client_info": {
           "package_name": "com.sadgururesort.admin"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDummyKeyForSadguruLocalBuild0001"
+          "current_key": "AIzaSyC4ToCW0t1IEr3rTwMwb5SkhH_RZLqng0g"
         }
       ],
       "services": {
