@@ -25,4 +25,8 @@ router.post('/device-token', adminController.registerDeviceToken);
 router.delete('/device-token', adminController.unregisterDeviceToken);
 router.get('/notification-logs', adminController.getNotificationLogs);
 
+// CNN + Server OCR
+router.post('/analyze-aadhaar', adminController.analyzeAadhaarImage);
+router.get('/ocr-status', adminController.getOcrModelStatus);
+
 module.exports = router;

@@ -271,3 +271,33 @@ exports.getNotificationLogs = async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
+
+// ─── CNN + Server OCR for Aadhaar ───────────────────────────────────────────
+let _aadhaarCnnService = null;
+function getAadhaarCnnService() {
+  if (!_aadhaarCnnService) {
+    try { _aadhaarCnnService = require('../services/aadhaarCnnOcrService'); }
+    catch (e) { console.error('[CNN OCR] Service load error:', e.message); }
+  }
+  return _aadhaarCnnService;
+}
+
+exports.analyzeAadhaarImage = async (req, res) => {
+  try {
+    const { imageBase64 } = req.body;
+    if (!imageBase64) return res.status(400).json({ success: false, message: 'imageBase64 is required.' });
+    const svc = getAadhaarCnnService();
+    if (!svc) return res.status(503).json({ success: false, message: 'OCR service unavailable.' });
+    const result = await svc.analyzeAadhaarImage(imageBase64);
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[CNN OCR API Error]:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getOcrModelStatus = async (req, res) => {
+  const svc = getAadhaarCnnService();
+  if (!svc) return res.json({ success: true, modelLoaded: false, engine: 'unavailable' });
+  return res.json({ success: true, ...svc.getModelStatus() });
+};

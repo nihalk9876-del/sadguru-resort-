@@ -4,6 +4,7 @@ import jsQR from 'jsqr';
 import { QRCodeReader, RGBLuminanceSource, BinaryBitmap, HybridBinarizer, DecodeHintType } from '@zxing/library';
 import { inflate, inflateRaw } from 'pako';
 import Tesseract from 'tesseract.js';
+import { api } from '../../services/api.js';
 
 export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, targetLabel = '' }) {
   const [activeMode, setActiveMode] = useState('qr_live'); // 'qr_live' (Option 1 Default), 'photo_ocr', 'upload'
@@ -523,7 +524,37 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
         }
       }
 
-      // 2. MULTI-PASS HIGH-ACCURACY ENGLISH OCR
+      // 2. TRY SERVER-SIDE CNN + OCR FIRST (YOLOv8 field detection + multi-pass Tesseract)
+      setProgressPercent(25);
+      setProcessingStatus('Sending to AI server for advanced OCR analysis...');
+
+      let serverResult = null;
+      try {
+        serverResult = await api.analyzeAadhaarImage(dataUrl);
+      } catch (serverErr) {
+        console.warn('[Scanner] Server CNN OCR failed, falling back to local OCR:', serverErr.message);
+      }
+
+      if (serverResult && serverResult.success && (serverResult.name || serverResult.dob || serverResult.aadhaarNumber)) {
+        playBeep();
+        setProgressPercent(100);
+        setProcessingStatus(`Scan complete via ${serverResult.engine || 'Server OCR'}`);
+        setScannedData({
+          name: serverResult.name || '',
+          dob: serverResult.dob || '',
+          age: serverResult.age || null,
+          gender: serverResult.gender || '',
+          aadhaarNumber: serverResult.aadhaarNumber || '',
+          confidence: serverResult.confidence || 85,
+          source: serverResult.engine || 'Server AI OCR',
+          verified: !!(serverResult.name && (serverResult.dob || serverResult.aadhaarNumber))
+        });
+        setRawExtractedText(serverResult.rawText || `Engine: ${serverResult.engine || 'Server'}`);
+        setIsProcessing(false);
+        return;
+      }
+
+      // 3. LOCAL FALLBACK: MULTI-PASS HIGH-ACCURACY ENGLISH OCR
       setProgressPercent(30);
       setProcessingStatus('Enhancing image & recognizing text (Pass 1: High Contrast)...');
 

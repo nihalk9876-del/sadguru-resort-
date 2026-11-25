@@ -1,8 +1,34 @@
 import { PushNotifications } from '@capacitor/push-notifications';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 import { api } from './api';
 
 let isInitialized = false;
+
+export async function showLocalNotification({ title, body, data = {} }) {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    const perm = await LocalNotifications.checkPermissions();
+    if (perm.display !== 'granted') {
+      await LocalNotifications.requestPermissions();
+    }
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: Math.floor(Date.now() % 2147483647),
+          title: title || 'Sadguru Resort',
+          body: body || '',
+          channelId: 'sadguru_bookings_channel',
+          smallIcon: 'ic_stat_icon_config_sample',
+          extra: data,
+          schedule: { at: new Date(Date.now() + 100) }
+        }
+      ]
+    });
+  } catch (err) {
+    console.warn('[LocalNotification] Failed to schedule:', err.message);
+  }
+}
 
 export async function initPushNotifications({ onNotificationReceived, onNotificationTapped } = {}) {
   // Only execute on native Android / iOS devices
@@ -76,6 +102,11 @@ export async function initPushNotifications({ onNotificationReceived, onNotifica
     // Foreground Notification Received
     PushNotifications.addListener('pushNotificationReceived', (notification) => {
       console.log('[FCM Service] Push notification received in foreground:', notification);
+      showLocalNotification({
+        title: notification.title || 'Sadguru Resort',
+        body: notification.body || '',
+        data: notification.data || {}
+      });
       if (typeof onNotificationReceived === 'function') {
         onNotificationReceived(notification);
       }

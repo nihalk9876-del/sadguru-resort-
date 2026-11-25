@@ -326,5 +326,22 @@ export const api = {
       headers: getAuthHeaders()
     });
     return handleResponse(res);
+  },
+
+  // CNN + Server-side Aadhaar OCR
+  analyzeAadhaarImage: async (imageBase64) => {
+    const res = await fetch(`${API_BASE}/admin/analyze-aadhaar`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ imageBase64 })
+    });
+    return handleResponse(res);
+  },
+
+  getOcrModelStatus: async () => {
+    const res = await fetch(`${API_BASE}/admin/ocr-status`, {
+      headers: getAuthHeaders()
+    });
+    return handleResponse(res);
   }
 };
