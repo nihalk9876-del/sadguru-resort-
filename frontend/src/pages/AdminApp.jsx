@@ -112,16 +112,17 @@ export default function AdminApp() {
     // Anchor initial state in browser history
     window.history.replaceState({ tab: 'matrix' }, '');
 
-    const handleBackStep = () => {
+    const handleHardwareBack = () => {
       setActiveTab((currentTab) => {
         if (currentTab !== 'matrix') {
-          // If on Spot Book, Pool, Reports, or Ledger -> Step back to Rooms (Matrix) view!
+          // If on Spot Book, Pool, Reports, or Ledger -> Step back to Rooms (Matrix) view
           return 'matrix';
         }
 
-        // On root matrix tab: require double-tap within 2s to exit app
+        // On root matrix tab: require intentional double-tap (between 300ms and 2000ms) to exit
         const now = Date.now();
-        if (now - lastBackPressRef.current < 2000) {
+        const diff = now - lastBackPressRef.current;
+        if (lastBackPressRef.current > 0 && diff > 300 && diff < 2000) {
           try {
             CapApp.exitApp();
           } catch (e) {
@@ -131,16 +132,15 @@ export default function AdminApp() {
           lastBackPressRef.current = now;
           setExitToast(true);
           setTimeout(() => setExitToast(false), 2000);
-          // Push state back so next back press remains inside app
           window.history.pushState({ tab: 'matrix' }, '');
         }
         return currentTab;
       });
     };
 
-    // 1. Web / WebView history popstate
+    // 1. Web history popstate — only changes tab back to matrix, NEVER exits app
     const onPopState = () => {
-      handleBackStep();
+      setActiveTab((currentTab) => (currentTab !== 'matrix' ? 'matrix' : currentTab));
     };
     window.addEventListener('popstate', onPopState);
 
@@ -148,7 +148,7 @@ export default function AdminApp() {
     let capListener = null;
     try {
       capListener = CapApp.addListener('backButton', () => {
-        handleBackStep();
+        handleHardwareBack();
       });
     } catch (e) {}
 

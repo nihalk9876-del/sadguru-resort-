@@ -89,9 +89,13 @@ export async function initPushNotifications({ onNotificationReceived, onNotifica
       }
     });
 
-    // 4. Trigger Native FCM Device Registration
-    await PushNotifications.register();
-    isInitialized = true;
+    // 4. Trigger Native FCM Device Registration safely
+    try {
+      await PushNotifications.register();
+      isInitialized = true;
+    } catch (regError) {
+      console.warn('[FCM Service] Push registration deferred or warning:', regError);
+    }
 
     return { status: 'registered' };
   } catch (err) {

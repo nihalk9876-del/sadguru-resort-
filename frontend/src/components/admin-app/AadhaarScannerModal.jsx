@@ -103,6 +103,39 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
     return () => stopCamera();
   }, [isOpen, targetLabel]);
 
+  // Handle activeMode switching smoothly without unmounting camera video stream
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (activeMode === 'qr_live') {
+      if (!streamRef.current) {
+        startCamera();
+      } else {
+        if (videoRef.current && videoRef.current.srcObject !== streamRef.current) {
+          videoRef.current.srcObject = streamRef.current;
+        }
+        videoRef.current?.play().catch(() => { });
+        startLiveQRScanning();
+      }
+    } else if (activeMode === 'photo_ocr') {
+      // In photo_ocr, pause automatic QR scanning loop so user can take a photo
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
+      }
+      if (!streamRef.current) {
+        startCamera();
+      } else {
+        if (videoRef.current && videoRef.current.srcObject !== streamRef.current) {
+          videoRef.current.srcObject = streamRef.current;
+        }
+        videoRef.current?.play().catch(() => { });
+      }
+    } else if (activeMode === 'upload') {
+      stopCamera();
+    }
+  }, [activeMode, isOpen]);
+
   const decodeWithZXing = (canvas) => {
     if (!zxingReaderRef.current || !canvas) return null;
     try {
@@ -161,7 +194,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
         await track.applyConstraints({
           advanced: [{ focusMode: 'continuous' }, { exposureMode: 'continuous' }]
         });
-      } catch (e) {}
+      } catch (e) { }
     }
   };
 
@@ -195,7 +228,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
       const track = stream.getVideoTracks()[0];
       if (track) {
         if (track.applyConstraints) {
-          track.applyConstraints({ advanced: [{ focusMode: 'continuous' }, { exposureMode: 'continuous' }] }).catch(() => {});
+          track.applyConstraints({ advanced: [{ focusMode: 'continuous' }, { exposureMode: 'continuous' }] }).catch(() => { });
         }
         const caps = (track.getCapabilities && track.getCapabilities()) || {};
         setTorchSupported(true);
@@ -217,7 +250,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
       streamRef.current.getTracks().forEach(track => {
         try {
           track.applyConstraints({ advanced: [{ torch: false }] });
-        } catch (e) {}
+        } catch (e) { }
         track.stop();
       });
       streamRef.current = null;
@@ -646,7 +679,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
           const str = utf8Decoder.decode(new Uint8Array(byteArray));
           // If valid text without replacement characters, return utf-8
           if (!str.includes('\uFFFD')) return str;
-        } catch (e) {}
+        } catch (e) { }
         try {
           return latin1Decoder.decode(new Uint8Array(byteArray));
         } catch (e) {
@@ -834,7 +867,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
           };
         }
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // 3. Attempt Standard UIDAI XML format (<PrintLetterBarcodeData ... />)
     if (rawClean.includes('<PrintLetterBarcodeData') || rawClean.includes('name=')) {
@@ -967,7 +1000,7 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
       'ENROLMENT', 'ENROLLMENT', 'DOB', 'DATE', 'BIRTH', 'YEAR', 'MALE',
       'FEMALE', 'TRANSGENDER', 'HELP', 'HELPLINE', 'UIDAI', 'WWW', 'AADHAAR', 'AAD', 'DAA', 'VID',
       'FATHER', 'HUSBAND', 'WIFE', 'SON', 'DAUGHTER', 'ADDRESS', 'MERI', 'MERA', 'PEHCHAN', 'PO',
-      'PIN', 'CODE', 'INCOME', 'TAX', 'DEPARTMENT', 'STATE', 'DIST', 'DISTRICT', 'CARD', 
+      'PIN', 'CODE', 'INCOME', 'TAX', 'DEPARTMENT', 'STATE', 'DIST', 'DISTRICT', 'CARD',
       'SIGNATURE', 'NUMBER', 'NO', 'PRINT', 'VALID', 'REPUBLIC', 'BHARAT', 'SARKAR', 'AITEHI', 'HITA', 'ZA'
     ];
 
@@ -1227,32 +1260,35 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
         <div className={`px-4 py-2 border-b flex items-center gap-2 text-[11px] ${activeMode === 'qr_live' ? 'bg-emerald-50 border-emerald-200/60 text-emerald-900' : 'bg-amber-50/80 border-amber-200/60 text-amber-900'}`}>
           {activeMode === 'qr_live' ? (
             <><Zap className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span><strong>QR Mode (Recommended):</strong> Just point the camera at the Aadhaar QR code — it auto-detects instantly and gives <strong>100% accurate</strong> UIDAI-verified details. No button press needed.</span></>
+              <span><strong>QR Mode (Recommended):</strong> Just point the camera at the Aadhaar QR code — it auto-detects instantly and gives <strong>100% accurate</strong> UIDAI-verified details. No button press needed.</span></>
           ) : activeMode === 'photo_ocr' ? (
             <><Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
-            <span><strong>OCR Photo Mode:</strong> Align the full Aadhaar card in the frame and tap Capture. English name, DOB, and Aadhaar number are extracted automatically via multi-pass OCR.</span></>
+              <span><strong>OCR Photo Mode:</strong> Align the full Aadhaar card in the frame and tap Capture. English name, DOB, and Aadhaar number are extracted automatically via multi-pass OCR.</span></>
           ) : (
             <><Upload className="w-4 h-4 text-indigo-600 shrink-0" />
-            <span><strong>Upload Mode:</strong> Take a photo with your camera or upload an existing Aadhaar card image. Best when the live camera is unavailable.</span></>
+              <span><strong>Upload Mode:</strong> Take a photo with your camera or upload an existing Aadhaar card image. Best when the live camera is unavailable.</span></>
           )}
         </div>
 
         {/* Content Body */}
         <div className="p-4 overflow-y-auto space-y-3.5 flex-1">
 
-          {/* Mode 1: QR Live Continuous Scanner (DEFAULT — Option 1) */}
-          {activeMode === 'qr_live' && (
+          {/* Mode 1 & 2: Camera Viewport (Shared persistent video feed for both QR Live & OCR Photo) */}
+          {(activeMode === 'qr_live' || activeMode === 'photo_ocr') && (
             <div className="space-y-3">
-              <div className="relative aspect-[16/10] bg-slate-950 rounded-xl overflow-hidden flex items-center justify-center cursor-pointer" onClick={handleTapToFocus}>
+              <div
+                className="relative aspect-[16/10] bg-slate-950 rounded-xl overflow-hidden flex items-center justify-center cursor-pointer"
+                onClick={handleTapToFocus}
+              >
                 {cameraError ? (
                   <div className="p-4 text-center space-y-2">
                     <AlertCircle className="w-6 h-6 text-amber-400 mx-auto" />
                     <p className="text-xs text-white leading-relaxed">{cameraError}</p>
                     <button
                       onClick={() => setActiveMode('upload')}
-                      className="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-white hover:bg-slate-700"
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-white hover:bg-slate-700 cursor-pointer"
                     >
-                      Switch to Upload / Snap
+                      Switch to Photo Upload / Camera Snap
                     </button>
                   </div>
                 ) : (
@@ -1273,11 +1309,10 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
                             key={lvl}
                             type="button"
                             onClick={(e) => { e.stopPropagation(); applyZoom(lvl); }}
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold font-mono transition cursor-pointer select-none ${
-                              zoomLevel === lvl
-                                ? 'bg-amber-400 text-slate-950 shadow-xs'
-                                : 'text-white hover:text-amber-200'
-                            }`}
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold font-mono transition cursor-pointer select-none ${zoomLevel === lvl
+                              ? 'bg-amber-400 text-slate-950 shadow-xs'
+                              : 'text-white hover:text-amber-200'
+                              }`}
                             title={`Set zoom to ${lvl}x`}
                           >
                             {lvl}x
@@ -1285,17 +1320,16 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
                         ))}
                       </div>
                     )}
-                    
+
                     {/* Torch / Flashlight Toggle Button */}
                     {torchSupported && (
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); toggleTorch(); }}
-                        className={`absolute top-2.5 right-2.5 z-20 px-2.5 py-1.5 rounded-full backdrop-blur-md transition shadow-md flex items-center gap-1.5 text-xs font-semibold cursor-pointer select-none ${
-                          isTorchOn
-                            ? 'bg-amber-400 text-slate-950 shadow-amber-400/50 ring-2 ring-amber-300'
-                            : 'bg-black/60 text-white hover:bg-black/80 border border-white/20'
-                        }`}
+                        className={`absolute top-2.5 right-2.5 z-20 px-2.5 py-1.5 rounded-full backdrop-blur-md transition shadow-md flex items-center gap-1.5 text-xs font-semibold cursor-pointer select-none ${isTorchOn
+                          ? 'bg-amber-400 text-slate-950 shadow-amber-400/50 ring-2 ring-amber-300'
+                          : 'bg-black/60 text-white hover:bg-black/80 border border-white/20'
+                          }`}
                         title={isTorchOn ? 'Turn Flashlight Off' : 'Turn Flashlight On'}
                       >
                         {isTorchOn ? <Flashlight className="w-3.5 h-3.5 fill-slate-950" /> : <FlashlightOff className="w-3.5 h-3.5" />}
@@ -1303,98 +1337,53 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
                       </button>
                     )}
 
-                    {/* QR code targeting overlay — animated green scanner */}
-                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                      {/* Corner-bracket style QR finder */}
-                      <div className="relative w-48 h-48">
-                        {/* Top-left */}
-                        <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-emerald-400 rounded-tl-sm shadow-xs" />
-                        {/* Top-right */}
-                        <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-emerald-400 rounded-tr-sm shadow-xs" />
-                        {/* Bottom-left */}
-                        <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-emerald-400 rounded-bl-sm shadow-xs" />
-                        {/* Bottom-right */}
-                        <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-emerald-400 rounded-br-sm shadow-xs" />
-                        {/* Scanning sweep line */}
-                        <div className="absolute left-1 right-1 top-1/2 h-0.5 bg-emerald-400/80 animate-pulse rounded-full shadow-emerald-400 shadow-sm" />
+                    {activeMode === 'qr_live' ? (
+                      /* QR code targeting overlay — animated green scanner */
+                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        <div className="relative w-48 h-48">
+                          <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-emerald-400 rounded-tl-sm shadow-xs" />
+                          <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-emerald-400 rounded-tr-sm shadow-xs" />
+                          <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-emerald-400 rounded-bl-sm shadow-xs" />
+                          <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-emerald-400 rounded-br-sm shadow-xs" />
+                          <div className="absolute left-1 right-1 top-1/2 h-0.5 bg-emerald-400/80 animate-pulse rounded-full shadow-emerald-400 shadow-sm" />
+                        </div>
+                        <span className="mt-2 text-[10px] text-emerald-300 font-mono bg-black/60 px-2.5 py-0.5 rounded backdrop-blur-xs">
+                          {scannedData ? '✅ QR Detected!' : '🔍 Auto-Scanning (Multi-Engine)...'}
+                        </span>
+                        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 pointer-events-none">
+                          <span className="text-[9px] text-slate-200 bg-black/70 px-2.5 py-0.5 rounded whitespace-nowrap shadow-xs">
+                            Point at QR code • Use 1.5x / 2x zoom for tiny codes • Tap to refocus
+                          </span>
+                        </div>
                       </div>
-                      <span className="mt-2 text-[10px] text-emerald-300 font-mono bg-black/60 px-2.5 py-0.5 rounded backdrop-blur-xs">
-                        {scannedData ? '✅ QR Detected!' : '🔍 Auto-Scanning (Multi-Engine)...'}
-                      </span>
-                    </div>
-                    {/* Instruction label */}
-                    <div className="absolute bottom-2 left-1/2 -translate-x-1/2 pointer-events-none">
-                      <span className="text-[9px] text-slate-200 bg-black/70 px-2.5 py-0.5 rounded whitespace-nowrap shadow-xs">
-                        Point at QR code • Use 1.5x / 2x zoom for tiny codes • Tap to refocus
-                      </span>
-                    </div>
+                    ) : (
+                      /* OCR Photo alignment overlay */
+                      <div className="absolute inset-4 border-2 border-dashed border-amber-300 rounded-lg pointer-events-none flex flex-col justify-between p-2">
+                        <span className="text-[10px] text-amber-200 bg-black/60 px-2 py-0.5 rounded font-mono self-start">
+                          ALIGN FULL AADHAAR CARD IN FRAME
+                        </span>
+                        <span className="text-[9px] text-slate-300 bg-black/60 px-2 py-0.5 rounded self-end">
+                          Keep steady under good lighting
+                        </span>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
-              {/* QR live mode info card */}
-              {!cameraError && !scannedData && (
+
+              {activeMode === 'qr_live' && !cameraError && !scannedData && (
                 <div className="flex items-start gap-2 p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-emerald-800">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                   <span>No button needed — just hold the QR code steady inside the brackets. A beep confirms detection.</span>
                 </div>
               )}
-            </div>
-          )}
 
-          {/* Mode 2: OCR Live Camera Photo (manual capture) */}
-          {activeMode === 'photo_ocr' && (
-            <div className="space-y-3">
-              <div className="relative aspect-[16/10] bg-slate-950 rounded-xl overflow-hidden flex items-center justify-center">
-                {cameraError ? (
-                  <div className="p-4 text-center space-y-2">
-                    <AlertCircle className="w-6 h-6 text-amber-400 mx-auto" />
-                    <p className="text-xs text-white leading-relaxed">{cameraError}</p>
-                    <button
-                      onClick={() => setActiveMode('upload')}
-                      className="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-white hover:bg-slate-700"
-                    >
-                      Switch to Photo Upload / Camera Snap
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <video ref={videoRef} playsInline muted className="w-full h-full object-cover" />
-                    
-                    {/* Torch / Flashlight Toggle Button */}
-                    {torchSupported && (
-                      <button
-                        type="button"
-                        onClick={toggleTorch}
-                        className={`absolute top-2.5 right-2.5 z-20 px-2.5 py-1.5 rounded-full backdrop-blur-md transition shadow-md flex items-center gap-1.5 text-xs font-semibold cursor-pointer select-none ${
-                          isTorchOn
-                            ? 'bg-amber-400 text-slate-950 shadow-amber-400/50 ring-2 ring-amber-300'
-                            : 'bg-black/60 text-white hover:bg-black/80 border border-white/20'
-                        }`}
-                        title={isTorchOn ? 'Turn Flashlight Off' : 'Turn Flashlight On'}
-                      >
-                        {isTorchOn ? <Flashlight className="w-3.5 h-3.5 fill-slate-950" /> : <FlashlightOff className="w-3.5 h-3.5" />}
-                        <span className="text-[10px] font-mono">{isTorchOn ? 'Torch ON' : 'Torch'}</span>
-                      </button>
-                    )}
-
-                    <div className="absolute inset-4 border-2 border-dashed border-amber-300 rounded-lg pointer-events-none flex flex-col justify-between p-2">
-                      <span className="text-[10px] text-amber-200 bg-black/60 px-2 py-0.5 rounded font-mono self-start">
-                        ALIGN FULL AADHAAR CARD IN FRAME
-                      </span>
-                      <span className="text-[9px] text-slate-300 bg-black/60 px-2 py-0.5 rounded self-end">
-                        Keep steady under good lighting
-                      </span>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {!cameraError && (
+              {activeMode === 'photo_ocr' && !cameraError && (
                 <button
                   type="button"
                   onClick={handleCaptureFrame}
                   disabled={isProcessing || !consentGiven}
-                  className="w-full py-3 rounded-xl bg-[#DFB06C] hover:bg-[#d4a35d] disabled:opacity-50 text-slate-950 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-xs transition"
+                  className="w-full py-3 rounded-xl bg-[#DFB06C] hover:bg-[#d4a35d] disabled:opacity-50 text-slate-950 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
                 >
                   <Camera className="w-4 h-4 text-slate-950" />
                   Capture Photo & Extract Details via OCR
@@ -1552,10 +1541,10 @@ export default function AadhaarScannerModal({ isOpen, onClose, onScanSuccess, ta
                       onChange={e => {
                         const newDob = e.target.value;
                         const newAge = calculateAgeFromDOB(newDob);
-                        setScannedData({ 
-                          ...scannedData, 
-                          dob: newDob, 
-                          age: newAge || scannedData.age 
+                        setScannedData({
+                          ...scannedData,
+                          dob: newDob,
+                          age: newAge || scannedData.age
                         });
                       }}
                       className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-800 text-xs focus:border-amber-500 outline-none font-mono"

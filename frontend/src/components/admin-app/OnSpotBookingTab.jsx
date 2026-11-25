@@ -104,25 +104,9 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
       setErrorMessage('Primary Guest Name is required (scan Aadhaar or type name in Marathi/English).');
       return;
     }
-    if (!formData.phone.trim()) {
-      setErrorMessage('Guest contact phone number is required.');
+    if (formData.stayType === 'Family' && !formData.phone.trim()) {
+      setErrorMessage('Guest contact phone number is required for Family stay.');
       return;
-    }
-
-    // Couple Validation
-    if (formData.stayType === 'Couple') {
-      if (!formData.secondGuestName || !formData.secondGuestName.trim()) {
-        setErrorMessage('For Couple stay, the second guest full name is mandatory.');
-        return;
-      }
-      if (!formData.secondGuestAge) {
-        setErrorMessage('For Couple stay, the second guest age is mandatory.');
-        return;
-      }
-      if (!formData.secondGuestAadhaar || !formData.secondGuestAadhaar.trim()) {
-        setErrorMessage('For Couple stay, the second guest 12-digit Aadhaar number is mandatory.');
-        return;
-      }
     }
 
     setIsSubmitting(true);
@@ -131,13 +115,13 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
         roomNumber: formData.roomNumber,
         stayType: formData.stayType,
         customerName: formData.customerName,
-        phone: formData.phone,
+        phone: formData.stayType === 'Couple' ? (formData.phone.trim() || 'N/A') : formData.phone.trim(),
         aadhaarNumber: formData.aadhaarNumber,
         dob: formData.dob,
         age: formData.age,
-        secondGuestName: formData.secondGuestName,
-        secondGuestAge: formData.secondGuestAge,
-        secondGuestAadhaar: formData.secondGuestAadhaar,
+        secondGuestName: formData.stayType === 'Couple' ? '' : formData.secondGuestName,
+        secondGuestAge: formData.stayType === 'Couple' ? '' : formData.secondGuestAge,
+        secondGuestAadhaar: formData.stayType === 'Couple' ? '' : formData.secondGuestAadhaar,
         guests: formData.stayType === 'Couple' ? 2 : formData.guests,
         adults: formData.stayType === 'Couple' ? 2 : formData.adults,
         children: formData.children,
@@ -190,19 +174,15 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
     if (!completedBooking) return;
     setIsBillSharing(true);
     try {
-      if (waStage === 'idle') {
-        // Step 1: Open Customer WhatsApp with Bill Image + Short Details & "Visit Again"
-        await shareBillImageWithWhatsApp(completedBooking, null, false);
-        setWaStage('customer_opened');
-      } else if (waStage === 'customer_opened') {
-        // Step 2: Open Owner WhatsApp with Bill Image + Short Details & "Visit Again" (8001800146)
+      const isCouple = (completedBooking.stayType || formData.stayType) === 'Couple';
+      if (isCouple) {
+        // Couple booking: share Bill Image + Short Details & "Visit Again" directly to Owner (8001800146)
         await shareBillImageWithWhatsApp(completedBooking, OWNER_PHONE, true);
-        setWaStage('both_done');
       } else {
-        // Re-send if clicked again
-        await shareBillImageWithWhatsApp(completedBooking, null, false);
-        setWaStage('customer_opened');
+        // Family booking: share Bill Image + Short Details & "Visit Again" directly to Guest number
+        await shareBillImageWithWhatsApp(completedBooking, completedBooking.phone, false);
       }
+      setWaStage('both_done');
     } catch (err) {
       alert(`Bill Sharing Notice: ${err.message}`);
     } finally {
@@ -360,7 +340,7 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
               </div>
               <div>
                 <span className="text-xs font-bold text-slate-900 block">Couple Stay</span>
-                <span className="text-[10px] text-slate-500 block">Both Aadhaar required</span>
+                <span className="text-[10px] text-slate-500 block">1 Aadhaar • No phone</span>
               </div>
             </button>
 
@@ -380,7 +360,7 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
               </div>
               <div>
                 <span className="text-xs font-bold text-slate-900 block">Family Stay</span>
-                <span className="text-[10px] text-slate-500 block">1 Aadhaar sufficient</span>
+                <span className="text-[10px] text-slate-500 block">1 Aadhaar + Phone</span>
               </div>
             </button>
           </div>
@@ -415,17 +395,19 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
               />
             </div>
 
-            <div>
-              <label className="text-[11px] text-slate-500 block mb-1">Mobile Contact Number *</label>
-              <input
-                type="tel"
-                required
-                placeholder="e.g. 98220 11223"
-                value={formData.phone}
-                onChange={e => setFormData({ ...formData, phone: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 font-mono focus:bg-white focus:border-amber-500 outline-none transition"
-              />
-            </div>
+            {formData.stayType === 'Family' && (
+              <div>
+                <label className="text-[11px] text-slate-500 block mb-1">Mobile Contact Number *</label>
+                <input
+                  type="tel"
+                  required
+                  placeholder="e.g. 98220 11223"
+                  value={formData.phone}
+                  onChange={e => setFormData({ ...formData, phone: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 font-mono focus:bg-white focus:border-amber-500 outline-none transition"
+                />
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-2">
               <div>
@@ -476,58 +458,11 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
                 </div>
               </div>
             ) : (
-              /* Couple Stay: Mandatory Second Guest Card */
-              <div className="pt-2 border-t border-slate-200 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
-                    <Heart className="w-3.5 h-3.5 text-amber-600" />
-                    Second Guest / Partner Details (Mandatory)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => { setScannerTarget('guest2'); setIsScannerOpen(true); }}
-                    className="text-[10px] text-amber-700 font-semibold hover:underline flex items-center gap-1"
-                  >
-                    <Camera className="w-3.5 h-3.5" /> Scan Partner Aadhaar
-                  </button>
-                </div>
-
-                <div>
-                  <label className="text-[11px] text-slate-500 block mb-1">Second Guest Full Name * (मराठीत नाव)</label>
-                  <input
-                    type="text"
-                    required={formData.stayType === 'Couple'}
-                    placeholder="Enter partner name or scan Aadhaar"
-                    value={formData.secondGuestName}
-                    onChange={e => setFormData({ ...formData, secondGuestName: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-amber-50/50 border border-amber-200 text-slate-900 font-semibold focus:bg-white focus:border-amber-500 outline-none"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-[11px] text-slate-500 block mb-1">Second Guest Aadhaar No. *</label>
-                    <input
-                      type="text"
-                      required={formData.stayType === 'Couple'}
-                      placeholder="XXXX XXXX XXXX"
-                      value={formData.secondGuestAadhaar}
-                      onChange={e => setFormData({ ...formData, secondGuestAadhaar: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl bg-amber-50/50 border border-amber-200 text-amber-900 font-mono font-bold focus:bg-white focus:border-amber-500 outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] text-slate-500 block mb-1">Second Guest Age *</label>
-                    <input
-                      type="number"
-                      required={formData.stayType === 'Couple'}
-                      placeholder="e.g. 30"
-                      value={formData.secondGuestAge}
-                      onChange={e => setFormData({ ...formData, secondGuestAge: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl bg-amber-50/50 border border-amber-200 text-slate-900 font-bold focus:bg-white focus:border-amber-500 outline-none"
-                    />
-                  </div>
+              /* Couple Stay: Only 1 guest Aadhaar needed, no customer phone required */
+              <div className="pt-1 border-t border-slate-100">
+                <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200 text-[11px] text-amber-900 flex items-center gap-2">
+                  <Heart className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span><strong>Couple Stay:</strong> Only 1 guest Aadhaar card is needed. No customer phone number required — receipt will be shared to Owner ({OWNER_PHONE}).</span>
                 </div>
               </div>
             )}
@@ -750,11 +685,13 @@ export default function OnSpotBookingTab({ rooms, onBookingSuccess, preselectedR
                   <span>
                     {isBillSharing
                       ? 'Creating Bill Image...'
-                      : waStage === 'customer_opened'
-                      ? '✓ Customer Sent! Click to Send to Owner (8001800146)'
-                      : waStage === 'both_done'
-                      ? '✓ Bill Image & Message Sent to Both (8001800146)'
-                      : 'Send Bill Image & Message (WhatsApp)'}
+                      : (completedBooking.stayType || formData.stayType) === 'Couple'
+                      ? (waStage === 'both_done'
+                        ? `✓ Bill Image & Message Sent to Owner (${OWNER_PHONE})`
+                        : `Send Bill Image & Message to Owner (${OWNER_PHONE})`)
+                      : (waStage === 'both_done'
+                        ? `✓ Bill Image & Message Sent to Guest (${completedBooking.phone})`
+                        : `Send Bill Image & Message to Guest (${completedBooking.phone})`)}
                   </span>
                 </button>
               </div>

@@ -1,6 +1,8 @@
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
+
+export const WhatsAppDirectShare = registerPlugin('WhatsAppDirectShare');
 
 export const OWNER_PHONE = '8001800146';
 export const OWNER_NAME = 'Rushikesh Rohankar';
@@ -362,7 +364,7 @@ export async function shareBillImageWithWhatsApp(booking, targetPhone = null, is
   const base64Data = dataUrl.split(',')[1];
   const fileName = `Sadguru_Bill_${booking.id || Date.now()}.png`;
 
-  // 2. Mobile Native Capacitor Sharing (Shares file + text together)
+  // 2. Mobile Native Capacitor Sharing (Directly targets the recipient chat so number is ALREADY SELECTED)
   if (Capacitor.isNativePlatform()) {
     try {
       const savedFile = await Filesystem.writeFile({
@@ -371,16 +373,31 @@ export async function shareBillImageWithWhatsApp(booking, targetPhone = null, is
         directory: Directory.Cache
       });
 
-      await Share.share({
-        title: 'Shri Sadguru Resort - Booking Bill',
-        text: shortText,
-        files: [savedFile.uri],
-        dialogTitle: isOwner ? `Send Bill to Owner (${OWNER_NAME}: ${OWNER_PHONE})` : `Send Bill to Customer (${cleanPhone})`
+      // DIRECT CHAT SEND: directly opens the exact customer or owner chat with the image + text attached
+      await WhatsAppDirectShare.shareToChat({
+        phone: formattedPhone,
+        message: shortText,
+        filePath: savedFile.uri
       });
 
       return { success: true, native: true };
-    } catch (nativeErr) {
-      console.warn('Capacitor native share error, falling back to wa.me:', nativeErr);
+    } catch (pluginErr) {
+      console.warn('WhatsAppDirectShare plugin notice, falling back to Share.share:', pluginErr);
+      try {
+        const savedFile = await Filesystem.getUri({
+          path: fileName,
+          directory: Directory.Cache
+        });
+        await Share.share({
+          title: 'Shri Sadguru Resort - Booking Bill',
+          text: shortText,
+          files: [savedFile.uri],
+          dialogTitle: isOwner ? `Send Bill to Owner (${OWNER_NAME}: ${OWNER_PHONE})` : `Send Bill to Customer (${cleanPhone})`
+        });
+        return { success: true, native: true };
+      } catch (shareErr) {
+        console.warn('Share.share fallback notice:', shareErr);
+      }
     }
   }
 
